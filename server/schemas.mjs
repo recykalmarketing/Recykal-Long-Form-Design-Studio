@@ -95,3 +95,18 @@ export const qcSchema = {
     summary:{type:'string'}
   }
 };
+
+export const outlineSchema = {
+  type:'object', additionalProperties:false, required:['title','strategy','items'],
+  properties:{
+    title:{type:'string'}, strategy:{type:'string'},
+    items:{type:'array',items:{type:'object',additionalProperties:false,required:['title','role','layout','visualTreatment','purpose'],properties:{
+      title:{type:'string'}, role:{type:'string'}, layout:{type:'string',enum:['cover','editorial','two-column','stat','quote','timeline','comparison','process','table','chart','image-led','closing']}, visualTreatment:{type:'string'}, purpose:{type:'string'}
+    }}}
+  }
+};
+
+export const variationsSchema = {
+  type:'object', additionalProperties:false, required:['variations'],
+  properties:{variations:{type:'array',minItems:3,maxItems:3,items:pageSchema}}
+};

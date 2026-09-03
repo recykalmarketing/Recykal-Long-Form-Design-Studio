@@ -19,6 +19,18 @@ export function staticQualityCheck(project){
     const primaryLike=blocks.filter(b=>['heading','stat','quote'].includes(b.type));
     if(!headings.length) issues.push(issue('hierarchy','warning','Page/section has no clear H1-level heading.',idx));
     if(primaryLike.length>3) issues.push(issue('hierarchy','warning','More than three elements compete for primary attention; simplify or regroup.',idx));
+    const textChars=blocks.reduce((n,b)=>n+(b.text||'').length+(b.items||[]).join(' ').length+(b.tableRows||[]).flat().join(' ').length,0);
+    const visualBlocks=blocks.filter(b=>['image','chart','table','stat'].includes(b.type)).length + ((['process','timeline','comparison'].includes(p.layout)&&blocks.some(b=>b.type==='bullets'))?1:0);
+    const occupancy=Math.min(1.25,blocks.reduce((n,b)=>{if(b.type==='heading')return n+.11;if(b.type==='subheading'||b.type==='kicker')return n+.05;if(b.type==='paragraph')return n+Math.min(.25,.04+(String(b.text||'').length/1100)*.24);if(b.type==='bullets')return n+Math.min(.30,.05+(b.items||[]).length*.045);if(b.type==='image')return n+.34;if(b.type==='chart')return n+.30;if(b.type==='table')return n+Math.min(.46,.12+(b.tableRows||[]).length*.035);if(b.type==='stat')return n+.13;if(b.type==='quote')return n+.22;return n+.04;},0));
+    if(project.type==='document'&&!['cover','quote','closing'].includes(p.layout)&&occupancy<.48)issues.push(issue('visualCraft','warning',`Estimated page occupancy is only ${Math.round(occupancy*100)}%; recompose rather than leaving accidental dead space.`,idx));
+    if(project.type==='document'&&occupancy>1.08&&!['table','two-column'].includes(p.layout))issues.push(issue('legibility','warning','Estimated page density is too high for this composition; add a page or switch to a denser editorial grid instead of shrinking type.',idx));
+    if(project.type==='document' && !['cover','quote','closing'].includes(p.layout) && textChars<320 && visualBlocks===0) issues.push(issue('visualCraft','warning','Ordinary information page is likely under-filled; recompose with columns, a relevant visual, stat, process or evidence block instead of leaving accidental dead space.',idx));
+    const style=project.settings?.deckStyle||'auto';
+    if(project.type==='document' && style==='visual' && !['cover','quote','closing','table'].includes(p.layout) && textChars>420 && visualBlocks===0) issues.push(issue('visualCraft','warning','Visual style expects meaningful visual storytelling on this page; add an image, vector infographic, chart, stat or diagram rather than a text-only composition.',idx));
+    if(project.type==='document' && style==='consultant' && textChars>900 && !['two-column','table','chart','comparison'].includes(p.layout)) issues.push(issue('legibility','warning','Consultant style should use the editorial grid, evidence modules or analytical layouts more aggressively for dense information.',idx));
+    if(project.type==='document' && style==='minimal' && primaryLike.length>2) issues.push(issue('hierarchy','warning','Minimal style should reduce competing focal elements and preserve one dominant idea at a time.',idx));
+    if(project.type==='document' && textChars>1500 && !['two-column','table','chart'].includes(p.layout)) issues.push(issue('legibility','warning','Dense page should use an editorial multi-column/evidence layout rather than shrinking body copy.',idx));
+    if(['process','timeline','comparison'].includes(p.layout) && !blocks.some(b=>b.type==='bullets')) issues.push(issue('hierarchy','warning',`${p.layout} layout needs structured items to form the intended infographic.`,idx));
     for(const b of blocks){
       if(b.type==='paragraph' && (b.text||'').length>1100) issues.push(issue('legibility','warning','Very long paragraph may create poor sustained-reading rhythm; split into semantic paragraphs.',idx));
       if(b.type==='chart'){
@@ -27,6 +39,7 @@ export function staticQualityCheck(project){
         if(!['bar','dot','line','scatter','table'].includes(b.chartType||'bar')) issues.push(issue('contentFidelity','warning','Chart type is not supported by the analytical chart-choice rules.',idx));
       }
       if(b.type==='table' && !(b.tableRows||[]).length) issues.push(issue('contentFidelity','blocking','Table block has no rows; source table content may have been dropped.',idx));
+      if(b.type==='table' && (b.tableRows||[]).some(r=>(b.tableHeaders||[]).length && r.length!==(b.tableHeaders||[]).length)) issues.push(issue('contentFidelity','warning','Table rows have inconsistent column counts; verify source-cell alignment before export.',idx));
       if(b.type==='image' && !b.imageUrl && !String(b.imagePrompt||'').trim()) issues.push(issue('visualCraft','warning','Image block has neither an image nor a purposeful image prompt.',idx));
       if(b.type==='image' && b.imageUrl && !String(b.altText||'').trim()) issues.push(issue('accessibility','blocking','Meaningful image is missing alternative text.',idx));
       if(['heading','subheading','paragraph','quote','kicker'].includes(b.type) && /\b(Heading|Subheading|Body)\b\s*:/i.test(b.text||'')) issues.push(issue('hierarchy','warning','Literal hierarchy labels appear in final content; hierarchy should be expressed typographically.',idx));

@@ -173,3 +173,21 @@ Total = 100. Passing threshold = 85.
 Blocking defect if any: source-critical content missing/invented; accessibility-critical problem; unreadable content; likely clipping/overflow; broken interaction state.
 Be strict. Do not award points for decoration when comprehension, evidence or accessibility is weak.
 `;
+
+export const REFERENCE_LAYOUT_LEARNINGS = `
+REFERENCE-DERIVED LONG-FORM LAYOUT INTELLIGENCE
+The supplied annual-report / ESG references demonstrate useful composition patterns. Learn the structural ideas, never copy their colors, logos, text or exact artwork.
+- Use asymmetric covers with a strong title zone plus a purposeful hero/vector field.
+- Use contents/orientation pages with compact columns and clear number-to-section mapping.
+- Leadership/opening pages may combine portrait/image, quote, signature/callout and 2-column narrative.
+- Dense narrative pages should use a real editorial column system instead of one narrow text stack with unused space.
+- Performance pages should combine a strong headline with a modular dashboard of stats, charts and short interpretation.
+- Timelines should use a visible path, nodes, chronology and short text groups rather than paragraph lists.
+- Process/values pages should use relevant icons, vector connectors and alternating modules to make sequence or grouping immediately visible.
+- Comparison / goals pages can use split columns with aligned headings, repeated semantic anchors and controlled contrast.
+- Data-heavy pages should use accurate tables with clear header bands, aligned columns and enough row height; large tables may continue across pages with repeated headers.
+- Market/geography pages can use maps or spatial diagrams only when geography is meaningful.
+- Closing pages may deliberately use larger negative space, but ordinary information pages should avoid accidental empty areas.
+- Visual rhythm should alternate opening, narrative, evidence, pause, synthesis and action. Do not repeat one page recipe.
+- Recykal brand colors replace all reference colors. Poppins and Recykal logo rules remain locked.
+`;

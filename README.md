@@ -1,145 +1,154 @@
-# Long Form Design Studio
+# Long Form Design Studio — Recykal
 
-**For Recykal, by Recykal.** An internal, brand-locked AI design workspace for the marketing team.
+Native internal AI design platform for the Recykal Marketing Team. Gamma is a product/UX benchmark only; this application has no Gamma API dependency.
 
-## Current functional scope
+## Release
+`1.1.0-rc1` — pre-publish release candidate with progressive generation and dual PDF production profiles.
 
-- **Presentation Studio** — generate/edit slide-based presentations and export editable `.pptx` or PDF.
-- **Document Studio** — generate/edit continuous long-form documents with **no application-level page-count cap**. Add sections manually or use **Continue document** repeatedly.
-- **Graphic Studio** — generate/edit a branded graphic and export high-resolution PNG or PDF.
-- **Create with AI** — prompt-based generation through the OpenAI Responses API.
-- **Upload & Design** — source-driven generation from PDF, DOC/DOCX, PPT/PPTX, XLS/XLSX and CSV.
-- **Legacy Office support** — `.doc`, `.ppt`, `.xls` are converted by LibreOffice in the included Docker image before parsing.
-- **Source modes** — Preserve, Improve, Condense, Research + Expand.
-- **Live research** — optional OpenAI web-search tool for fresh evidence.
-- **AI editing** — rewrite, shorten, CXO tone, government tone, stronger headlines, page layout improvement and page variation.
-- **AI visuals** — generate visuals for image blocks with the configured OpenAI image model.
-- **Recykal brand lock** — supplied Recykal SVG, Poppins UI/design system, approved Recykal palette and logo usage safeguards.
-- **Persistence** — Render Postgres when `DATABASE_URL` is configured; local JSON fallback for local development.
-- **Internal access** — optional `APP_ACCESS_CODE` gate.
-- **Design Intelligence Knowledge Base v1.0** — the uploaded Graphic Design + UI/UX + Long-form rules are encoded as runtime constraints, not decorative suggestions.
-- **Automated QC gate** — every generated asset is scored against content fidelity (20), hierarchy (15), legibility (15), consistency (10), accessibility (15), UX/task clarity (10), visual craft (10) and export quality (5). Export threshold is 85/100 with blocking defects overriding the score.
-- **Source extraction confidence** — file ingestion marks high/medium/low confidence and warns rather than hallucinating unreadable source content.
-- **Data integrity** — charts are selected by analytical question; source tables can be preserved as structured text tables rather than being forced into charts.
-- **Image accessibility** — generated meaningful images carry alternative text and QC blocks export when it is missing.
+## Core studios
+- **Document** — unlimited-length continuous documents, reports, ebooks, research papers, policy handbooks and annual reports.
+- **Presentation** — editable slide-based decks, proposals, pitches and executive presentations.
+- **Graphic** — editable branded infographics and campaign/static graphics.
 
-## Important accuracy design
+## Inputs
+Generate from a prompt or **Upload & Design** from PDF, DOC/DOCX, PPT/PPTX, XLS/XLSX and CSV. Source-aware modes: Preserve, Improve, Condense, Research + Expand.
 
-The Studio does not claim that AI can guarantee factual accuracy. Instead it implements explicit guardrails:
+## Visual intelligence
+- Recykal-only theme system and Poppins-based brand system.
+- Layout directions: Auto, Minimal, Visual, Classic, Consultant.
+- Image sources: AI, approved/Recykal source assets, rights-aware Openverse stock, mixed, placeholder, none.
+- Art-direction library plus custom style instructions and up to four reference/moodboard images.
+- 1–3 image alternatives, smart focal point, Fit/Fill, upload/drag-drop in-place replacement.
+- Semantic vector icons, charts, tables, timelines, processes, comparisons, stat dashboards and image-led pages.
+- Cover-only logo by default; project master header/footer/page numbers update globally.
 
-- In **Preserve** mode, the source file is treated as authoritative and external research is disabled.
-- In **Improve/Condense** modes, the system is instructed to preserve facts, dates, figures, names and caveats.
-- In **Research + Expand**, new information is allowed only with traceable source records.
-- Generated designs remain editable before export.
-- File-based redesign validates source structure, sequence, tables, figures and factual meaning. Low-confidence extraction is explicitly flagged.
-- The Studio runs design QC after generation and can automatically revise a failed generation before it reaches the editor.
-- Manual edits mark QC as stale; export re-runs the quality gate and refuses delivery below 85/100 or with blocking defects.
+## Editorial intelligence
+The runtime design rules are derived from the supplied Design Bot Knowledge Base and Recykal brand guideline. The engine prioritizes correctness, comprehension, hierarchy, accessibility, consistency and production accuracy before decoration. It uses content roles and page rhythm rather than repeating one template.
 
-## Local setup
+## Progressive generation
+- The create workflow streams generation progress instead of keeping the user on a waiting screen.
+- Completed document pages or presentation slides appear immediately in a live thumbnail rail and full preview canvas.
+- Users can inspect earlier pages/slides while later ones are still being composed.
+- Layout balancing, visual materialization, QC and auto-correction are surfaced as explicit stages.
+- The preview is working-state content; bounded QC/visual corrections may still occur before final save.
 
-Requirements: Node 20+ (Node 22 recommended). For legacy `.doc/.ppt/.xls` files, install LibreOffice or run the Docker image.
+## Quality and publishing
+- 85/100 quality gate with content fidelity, hierarchy, legibility, consistency, accessibility, UX clarity, visual craft and export checks.
+- Review exports remain available below threshold and are marked DRAFT/QC REVIEW.
+- Final export also passes rendered-file preflight for clipping, overflow and visual defects.
+- **Digital PDF**: standard-size RGB export, screen/email/web optimized, no production marks.
+- **Print PDF**: CMYK prepress conversion, embedded-font checks, raster effective-resolution checks and rendered visual preflight. No bleed, TrimBox/BleedBox, or crop marks are added in the current release.
+- Print raster rules: below 180 ppi blocks a final print export; 180–299 ppi warns; 300 ppi+ is preferred.
+- A printer-specific CMYK ICC profile can be provided with `PRINT_ICC_PROFILE`. If omitted, the container uses Ghostscript's generic CMYK profile when available. This build does not claim certified PDF/X without a printer-specific workflow/validation.
+- Optional Approver sign-off can be required for final delivery using `REQUIRE_APPROVER_FOR_FINAL_EXPORT=true`.
 
+## Collaboration and enterprise integrations
+Implemented in this release candidate:
+- WebSocket presence, selected-page/block presence and live project-update broadcasts.
+- Optimistic concurrency; stale saves return/restore the latest server revision instead of silently overwriting a teammate.
+- Persistent threaded comments with resolve/reopen.
+- Workflow roles: Viewer, Creator, Reviewer, Approver, Admin; page locking and approval metadata.
+- Google OIDC SSO and Microsoft Entra OIDC SSO (enabled only when credentials are configured).
+- SCIM 2.0 user provisioning endpoints.
+- Durable Postgres-backed asset/media store; uploaded originals, extracted source aggregates, generated images, approved media and style references survive Render restarts. Immutable cache headers make the media endpoints CDN/proxy friendly.
+- Rights-aware Openverse image search/import with creator/license/provenance metadata and automatic attribution treatment in exported visual frames when needed.
+- Localization/translation + QA for English, German, French, Spanish, Polish, Hindi, Telugu and Arabic; Docker includes Noto script fonts for non-Latin exports.
+- Secure read-only share links, expiration/revocation, optional approved-download permission, page-view/dwell analytics and engagement heatmap.
+- Semantic version comparison/checkpoints/restore.
+- Stable `/api/v1` automation API with scoped API keys.
+- Signed HMAC outgoing webhooks with private-network SSRF protection.
+
+## Security defaults
+- OpenAI keys remain server-side.
+- API keys are limited to `/api/v1` and do not inherit Admin privileges.
+- Corporate email domains can be restricted with `ALLOWED_EMAIL_DOMAINS`.
+- OAuth flow uses state, nonce and PKCE.
+- Session cookies are HttpOnly, SameSite=Lax and Secure in production.
+- Helmet, CORS allow-list support and rate limiting are enabled.
+- Webhook targets cannot resolve to private/internal addresses unless explicitly enabled.
+
+## Required Render configuration
+At minimum:
+- `OPENAI_API_KEY`
+- `APP_ACCESS_CODE` while SSO is not configured
+- `DATABASE_URL` (created by the supplied `render.yaml` Blueprint)
+
+`render.yaml` also generates an `AUTH_SECRET` automatically.
+
+### Optional Google SSO
+Set:
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `PUBLIC_BASE_URL=https://recykal-long-form-design-studio.onrender.com`
+
+Authorized callback:
+`https://recykal-long-form-design-studio.onrender.com/auth/callback/google`
+
+### Optional Microsoft Entra SSO
+Set:
+- `MICROSOFT_CLIENT_ID`
+- `MICROSOFT_CLIENT_SECRET`
+- `MICROSOFT_TENANT_ID`
+- `PUBLIC_BASE_URL=https://recykal-long-form-design-studio.onrender.com`
+
+Authorized callback:
+`https://recykal-long-form-design-studio.onrender.com/auth/callback/microsoft`
+
+### PDF production
+Optional overrides:
+- `PRINT_ICC_PROFILE=/path/to/printer-profile.icc`
+
+`PRINT_ICC_PROFILE` should point to a CMYK destination profile available inside the deployed container.
+
+### Optional SCIM
+Set a strong random `SCIM_BEARER_TOKEN`. Base endpoint:
+`/scim/v2/Users`
+
+### Role bootstrap
+Comma-separated env lists can assign initial SSO roles:
+- `ADMIN_EMAILS`
+- `APPROVER_EMAILS`
+- `REVIEWER_EMAILS`
+
+Admins can subsequently manage users from **Operations**.
+
+## Public API
+Create an API key under **Operations → API keys**. Use:
+`Authorization: Bearer lfs_...`
+
+Available RC endpoints:
+- `GET /api/v1/projects`
+- `GET /api/v1/projects/:id`
+- `POST /api/v1/generate`
+- `POST /api/v1/projects/:id/export` — for PDF, send `profile: "digital" | "print"`.
+
+Scopes: `read`, `write`, `export` or `*`.
+
+## Webhooks
+Create from **Operations → Webhooks**. Events include project creation/update/QC/export and comments. Payloads are signed:
+- `x-lfds-event`
+- `x-lfds-signature: sha256=<HMAC>`
+
+## Local development
 ```bash
-cp .env.example .env
-# Add your OPENAI_API_KEY to .env, or export it in your shell.
 npm install
+cp .env.example .env
+npm run dev
+```
+
+Production:
+```bash
 npm run build
 npm start
 ```
 
-Open `http://localhost:10000`.
+## Validation performed in the build workspace
+- Every `server/*.mjs` file passes Node syntax checking.
+- `src/main.jsx` passes the TypeScript JavaScript/JSX parser with `--noEmit`.
+- `render.yaml`, Dockerfile and environment documentation are included.
 
-For development with Vite hot reload:
+The build workspace could not reach the public npm registry, so `npm install`/the final Vite bundle must be executed by Render during the RC deployment. Do not call this release production-final until the Render build and the generated-output acceptance test pass.
 
-```bash
-npm run dev
-```
+## v1.1.1 print-profile simplification
 
-Frontend: `http://localhost:5173`  
-API: `http://localhost:10000`
-
-## Environment variables
-
-| Variable | Required | Purpose |
-|---|---:|---|
-| `OPENAI_API_KEY` | For live AI | Server-side OpenAI API key. Never expose it in browser code. |
-| `OPENAI_MODEL` | No | Defaults to `gpt-5.6`. |
-| `OPENAI_IMAGE_MODEL` | No | Defaults to `gpt-image-2`. |
-| `APP_ACCESS_CODE` | Recommended | Simple internal team gate. |
-| `AUTO_QC` | No | Defaults to `true`; automatically quality-check and revise failed AI generations. |
-| `QC_MAX_REVISIONS` | No | Defaults to `1`; maximum automatic revision passes after generation (0–2). |
-| `MAX_SOURCE_CHARS` | No | Maximum extracted source text sent in the primary generation request; defaults in server code. |
-| `DATABASE_URL` | Recommended on Render | Durable project storage via Postgres. |
-| `PORT` | No | Defaults to `10000`. Render supplies this automatically. |
-
-## Deploy on Render from Git
-
-The repository includes `render.yaml` and a Dockerfile. The Docker image is used so legacy Office files are supported.
-
-1. Push this folder to your Git repository.
-2. In Render choose **New → Blueprint** and connect the repo.
-3. Render reads `render.yaml` and creates the web service plus Postgres database.
-4. During Blueprint setup, enter `OPENAI_API_KEY` and `APP_ACCESS_CODE` when Render prompts for the `sync: false` variables.
-5. Deploy.
-
-The server binds to `0.0.0.0:$PORT`, as required by Render.
-
-## File parsing details
-
-- PDF: per-page text extraction.
-- DOCX: heading/list-aware extraction plus embedded media extraction.
-- PPTX: per-slide text extraction plus embedded media extraction.
-- XLSX: all sheets preserved as structured CSV-like data.
-- DOC/PPT/XLS: converted to modern Office formats using LibreOffice, then parsed.
-- CSV: direct ingestion.
-
-Source files can be combined in one generation request (up to 10 files per upload in this build).
-
-## Storage note
-
-Project JSON is durable in Postgres. Uploaded source media and AI-generated image files currently live on the web-service filesystem. On Render's ephemeral filesystem they can disappear after a rebuild/restart. For production durability, attach a persistent disk or replace the filesystem adapter with S3/R2/Cloudinary. The project content itself remains in Postgres.
-
-## API endpoints
-
-- `GET /api/health`
-- `GET /api/config`
-- `POST /api/upload`
-- `POST /api/generate`
-- `GET /api/projects`
-- `GET /api/projects/:id`
-- `PUT /api/projects/:id`
-- `DELETE /api/projects/:id`
-- `POST /api/projects/:id/continue`
-- `POST /api/projects/:id/ai-edit`
-- `POST /api/projects/:id/generate-image`
-- `POST /api/projects/:id/qc`
-- `POST /api/projects/:id/export`
-
-## Product boundary for this build
-
-This is a native Recykal application. **There is no Gamma dependency and no Gamma API key.** Gamma was used only as a UX benchmark in the product brief.
-
-
-## Design Intelligence implementation
-
-The source document is retained at `docs/Design_Bot_Knowledge_Base_Graphic_UI_UX_Longform.pdf`. Its operating rules are encoded in `server/designKnowledge.mjs` and injected into every generation/editing instruction through `server/brand.mjs`.
-
-The runtime follows this priority order:
-
-`correctness → comprehension → hierarchy → accessibility → consistency → visual distinction → decoration`
-
-Key encoded rules include semantic hierarchy before styling; Gestalt proximity before containers; A4 6-column/editorial and responsive grid guidance; 4/8 spacing rhythm; Poppins-based semantic typography; 50–75 character long-form line-length guidance; WCAG 2.2 contrast/target/resize gates; Nielsen interaction heuristics; long-form narrative and page rhythm; research-paper and case-study structures; analytical chart selection and data integrity; purposeful image roles; responsive recomposition; file-source preservation; and the 85/100 pre-export quality gate.
-
-The operating principle is: **do not decorate information; design understanding.**
-
-## Render startup fix (v0.3.1)
-
-This version is compatible with Express 5 route matching. The SPA fallback uses `/{*splat}` instead of the Express 4-style `*` wildcard. If a previous Render deploy crashed on startup with `PathError`, `Missing parameter name`, or a `path-to-regexp` stack trace, redeploy this version.
-
-After deployment, verify these endpoints in order:
-
-1. `/api/health` → should return JSON with `"ok": true`.
-2. `/api/config` → should return the Studio configuration.
-3. `/` → should load the Long Form Design Studio UI.
-
-If `/api/health` is unavailable, open Render → Service → Logs and search for the first `error` line in the latest deploy.
+Per current production scope, the Print PDF profile no longer generates bleed, TrimBox/BleedBox metadata or crop/printer marks. It remains distinct from Digital PDF through CMYK conversion, embedded-font validation, raster-resolution validation and rendered visual preflight.

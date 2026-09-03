@@ -1,6 +1,6 @@
 {
   "name": "long-form-design-studio",
-  "version": "0.3.1",
+  "version": "1.1.1-rc1",
   "private": true,
   "type": "module",
   "engines": {
@@ -31,7 +31,11 @@
     "uuid": "latest",
     "vite": "latest",
     "xlsx": "latest",
-    "@fontsource/poppins": "latest"
+    "@fontsource/poppins": "latest",
+    "jose": "latest",
+    "ws": "latest",
+    "helmet": "latest",
+    "express-rate-limit": "latest"
   },
   "devDependencies": {
     "concurrently": "latest"

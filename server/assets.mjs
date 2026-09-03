@@ -1,0 +1,12 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { saveBinaryAsset, getBinaryAsset, listAssets } from './store.mjs';
+
+const mimeByExt={'.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp','.svg':'image/svg+xml','.pdf':'application/pdf','.docx':'application/vnd.openxmlformats-officedocument.wordprocessingml.document','.pptx':'application/vnd.openxmlformats-officedocument.presentationml.presentation','.xlsx':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','.csv':'text/csv'};
+export function mimeFor(name,fallback='application/octet-stream'){return mimeByExt[path.extname(String(name||'')).toLowerCase()]||fallback}
+export async function persistBytes(bytes,{name='asset.bin',mimeType,metadata={}}={}){const b=Buffer.isBuffer(bytes)?bytes:Buffer.from(bytes);const sha256=crypto.createHash('sha256').update(b).digest('hex');const id=await saveBinaryAsset({name,mimeType:mimeType||mimeFor(name),bytes:b,sha256,metadata});return {id,url:`/api/assets/${id}`,sha256,name,mimeType:mimeType||mimeFor(name),sizeBytes:b.length,metadata}}
+export async function persistFile(filePath,{name=path.basename(filePath),mimeType,metadata={}}={}){return persistBytes(await fs.readFile(filePath),{name,mimeType,metadata})}
+export async function persistParsedMedia(parsed,{source='source-file'}={}){if(!parsed)return parsed;for(const a of parsed.assets||[]){try{const local=a.path||a.localPath;if(!local)continue;const saved=await persistFile(local,{name:a.name||path.basename(local),mimeType:a.mimeType||mimeFor(local),metadata:{...a,source}});a.assetId=saved.id;a.url=saved.url;a.provenance={kind:source,assetId:saved.id,original:a.url||null}}catch{}}if(parsed.originalPath){try{const saved=await persistFile(parsed.originalPath,{name:parsed.filename||path.basename(parsed.originalPath),metadata:{source:'original-upload',kind:parsed.kind}});parsed.originalAssetId=saved.id;parsed.originalUrl=saved.url}catch{}}return parsed}
+export async function sendAsset(req,res){const item=await getBinaryAsset(req.params.id);if(!item)return res.status(404).json({error:'Asset not found.'});res.set('Content-Type',item.mimeType);res.set('Content-Length',String(item.sizeBytes));res.set('Cache-Control','public, max-age=31536000, immutable');res.set('ETag',`"${item.sha256}"`);res.set('Content-Disposition',`inline; filename="${String(item.name||'asset').replace(/"/g,'')}"`);return res.end(item.bytes)}
+export async function assetList(q){return listAssets({q:q||'',limit:200})}

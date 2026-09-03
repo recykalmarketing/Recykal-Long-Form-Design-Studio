@@ -1,0 +1,7 @@
+import { WebSocketServer } from 'ws';
+const rooms=new Map();
+function room(projectId){if(!rooms.has(projectId))rooms.set(projectId,new Set());return rooms.get(projectId)}
+function send(ws,msg){if(ws.readyState===1)ws.send(JSON.stringify(msg))}
+export function attachCollaboration(server,{identify}){const wss=new WebSocketServer({server,path:'/ws'});wss.on('connection',async(ws,req)=>{let identity=null;try{identity=await identify(req)}catch{}if(!identity){ws.close(1008,'Authentication required');return}ws.meta={identity,projectId:null};ws.on('message',raw=>{let m;try{m=JSON.parse(String(raw))}catch{return}if(m.type==='join'&&m.projectId){if(ws.meta.projectId)room(ws.meta.projectId).delete(ws);ws.meta.projectId=String(m.projectId);room(ws.meta.projectId).add(ws);broadcastPresence(ws.meta.projectId)}else if(m.type==='cursor'||m.type==='selection'){broadcast(ws.meta.projectId,{...m,user:{id:identity.id,name:identity.name,role:identity.role}},ws)}else if(m.type==='ping')send(ws,{type:'pong',at:Date.now()})});ws.on('close',()=>{if(ws.meta.projectId){room(ws.meta.projectId).delete(ws);broadcastPresence(ws.meta.projectId)}})});return wss}
+function broadcastPresence(projectId){const users=[...room(projectId)].map(ws=>({id:ws.meta.identity.id,name:ws.meta.identity.name,role:ws.meta.identity.role}));broadcast(projectId,{type:'presence',users})}
+export function broadcast(projectId,message,except=null){if(!projectId)return;for(const ws of room(projectId)){if(ws!==except)send(ws,message)}}
