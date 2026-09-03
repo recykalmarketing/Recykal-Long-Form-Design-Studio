@@ -1,0 +1,39 @@
+{
+  "name": "long-form-design-studio",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "concurrently \"node --watch server/index.mjs\" \"vite --host 0.0.0.0\"",
+    "build": "vite build",
+    "start": "node server/index.mjs",
+    "check": "node server/selftest.mjs"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "cors": "latest",
+    "express": "latest",
+    "fast-xml-parser": "latest",
+    "jszip": "latest",
+    "mammoth": "latest",
+    "multer": "latest",
+    "openai": "latest",
+    "pdfjs-dist": "latest",
+    "pdfkit": "latest",
+    "pg": "latest",
+    "pptxgenjs": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "sharp": "latest",
+    "uuid": "latest",
+    "vite": "latest",
+    "xlsx": "latest",
+    "@fontsource/poppins": "latest"
+  },
+  "devDependencies": {
+    "concurrently": "latest"
+  }
+}
