@@ -158,6 +158,13 @@ app.use((err,req,res,next)=>{
 });
 
 const dist=path.resolve('dist');
-try{await fs.access(dist);app.use(express.static(dist));app.get('*',(req,res)=>res.sendFile(path.join(dist,'index.html')))}catch{}
+try{
+  await fs.access(dist);
+  app.use(express.static(dist));
+  // Express 5 requires named wildcards. This form also matches the root path.
+  app.get('/{*splat}',(req,res)=>res.sendFile(path.join(dist,'index.html')));
+}catch(e){
+  console.error('Frontend build directory not available:', e?.message || e);
+}
 
 app.listen(PORT,'0.0.0.0',()=>console.log(`Long Form Design Studio running on http://0.0.0.0:${PORT}`));

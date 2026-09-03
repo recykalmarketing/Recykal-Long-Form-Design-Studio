@@ -131,3 +131,15 @@ The runtime follows this priority order:
 Key encoded rules include semantic hierarchy before styling; Gestalt proximity before containers; A4 6-column/editorial and responsive grid guidance; 4/8 spacing rhythm; Poppins-based semantic typography; 50–75 character long-form line-length guidance; WCAG 2.2 contrast/target/resize gates; Nielsen interaction heuristics; long-form narrative and page rhythm; research-paper and case-study structures; analytical chart selection and data integrity; purposeful image roles; responsive recomposition; file-source preservation; and the 85/100 pre-export quality gate.
 
 The operating principle is: **do not decorate information; design understanding.**
+
+## Render startup fix (v0.3.1)
+
+This version is compatible with Express 5 route matching. The SPA fallback uses `/{*splat}` instead of the Express 4-style `*` wildcard. If a previous Render deploy crashed on startup with `PathError`, `Missing parameter name`, or a `path-to-regexp` stack trace, redeploy this version.
+
+After deployment, verify these endpoints in order:
+
+1. `/api/health` → should return JSON with `"ok": true`.
+2. `/api/config` → should return the Studio configuration.
+3. `/` → should load the Long Form Design Studio UI.
+
+If `/api/health` is unavailable, open Render → Service → Logs and search for the first `error` line in the latest deploy.
