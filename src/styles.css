@@ -170,3 +170,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .text-format-toolbar .toolbar-reset{white-space:nowrap}
 .design-block[contenteditable="true"]{cursor:text;caret-color:#005DFF;min-width:2ch}
 .design-block[contenteditable="true"]:focus{outline:2px solid rgba(0,93,255,.32);outline-offset:4px;border-radius:3px}
+
+/* v1.1.8 — optional exact final document page target */
+.page-count-control{margin:0 0 18px;padding:16px 18px;border:1px solid #dfe6ef;border-radius:16px;background:linear-gradient(180deg,#fbfdff 0%,#f7faff 100%)}
+.page-count-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.page-count-head p{margin:4px 0 0;color:#667085;font-size:12px;line-height:1.45}.page-count-row{display:flex;align-items:center;gap:14px;margin-top:12px;flex-wrap:wrap}.segmented.page-count-mode{display:grid;grid-template-columns:1fr 1fr;min-width:240px}.exact-page-input{display:flex;align-items:center;gap:8px;border:1px solid #cfd8e6;border-radius:12px;background:#fff;padding:6px 10px}.exact-page-input input{width:78px;border:0;outline:0;font:600 15px Poppins,sans-serif;color:#101828;background:transparent}.exact-page-input span{font-size:12px;color:#52606d;font-weight:600}.page-count-note{display:block;margin-top:10px;color:#667085;font-size:11px;line-height:1.55}.page-count-control .field-label small{font-weight:500;color:#667085}

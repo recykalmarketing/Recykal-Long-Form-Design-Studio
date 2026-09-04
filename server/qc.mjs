@@ -15,10 +15,11 @@ function a4Capacity(layout='editorial'){return ({cover:620,editorial:760,'two-co
 export function staticQualityCheck(project){
   const issues=[]; const pages=project.pages||[];
   if(!pages.length) issues.push(issue('contentFidelity','blocking','No designed pages/sections were generated.'));
+  if(project.type==='document'&&Number.isInteger(Number(project.settings?.targetPageCount))&&Number(project.settings.targetPageCount)>0&&pages.length!==Number(project.settings.targetPageCount))issues.push(issue('exportQuality','blocking',`Exact document length is ${project.settings.targetPageCount} A4 pages, but the current project contains ${pages.length}. Recompose to the requested page target before final export.`));
 
   pages.forEach((p,idx)=>{
     const blocks=p.blocks||[];
-    if(project.type==='document'&&!['cover','closing'].includes(p.layout)){const units=blocks.reduce((n,b)=>n+a4Units(b,p.layout),0),cap=a4Capacity(p.layout);if(units>cap*1.06)issues.push(issue('exportQuality','blocking','This page exceeds the fixed A4 portrait content area. Split/reflow it onto a continuation page; never increase physical page height.',idx));else if(units>cap*.94)issues.push(issue('legibility','warning','This A4 page is close to its safe content limit; verify line wrapping, table row height and footer clearance.',idx));}
+    if(project.type==='document'){const units=blocks.reduce((n,b)=>n+a4Units(b,p.layout),0),cap=a4Capacity(p.layout);const exact=Number.isInteger(Number(project.settings?.targetPageCount))&&Number(project.settings.targetPageCount)>0;if(units>cap*1.06&&(exact||!['cover','closing'].includes(p.layout)))issues.push(issue('exportQuality','blocking',exact?'This page exceeds the readable fixed A4 content budget while an exact final page target is active. Recompose within this A4 page or increase the requested page target; never increase physical page height or shrink body text below readability limits.':'This page exceeds the fixed A4 portrait content area. Split/reflow it onto a continuation page; never increase physical page height.',idx));else if(units>cap*.94&&!['cover','closing'].includes(p.layout))issues.push(issue('legibility','warning','This A4 page is close to its safe content limit; verify line wrapping, table row height and footer clearance.',idx));}
     const headings=blocks.filter(b=>b.type==='heading');
     const primaryLike=blocks.filter(b=>['heading','stat','quote'].includes(b.type));
     if(!headings.length) issues.push(issue('hierarchy','warning','Page/section has no clear H1-level heading.',idx));

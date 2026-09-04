@@ -22,6 +22,7 @@ Example JSON:
   "themeId":"recykal-core",
   "imageSource":"mixed",
   "artStyleId":"flat-line",
+  "targetPageCount":20,
   "research":true
 }
 ```
@@ -43,3 +44,7 @@ Generation requests may include `projectPalette`, an array of up to 8 six-digit 
 ```
 
 If omitted or empty, the selected Recykal theme palette is used. Project palette colours affect design accents only; logo artwork and typography rules remain locked.
+
+
+### Optional exact document page target
+For `type: "document"`, generation requests may include `targetPageCount` (1–500). If omitted or `null`, document length remains Auto. The exact count includes cover/closing pages and remains subject to A4/readability/source-fidelity gates.

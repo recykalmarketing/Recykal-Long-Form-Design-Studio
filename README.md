@@ -1,5 +1,19 @@
 # Long Form Design Studio — Recykal
 
+## v1.1.8 — Optional exact final document length
+
+- The initial brief now includes **Final designed document length** with **Auto** or **Exact pages**.
+- Exact count includes the cover and closing pages and is stored with the project.
+- Design-plan generation is reconciled to exactly the requested number of A4 page roles.
+- Page-safe generation verifies that each exact-count page fits one physical A4 portrait sheet; it retries compactly rather than silently creating extra continuation pages.
+- Readability and source fidelity remain hard gates: Preserve mode stops safely if the requested page budget cannot hold the source without dropping facts or using unreadably small type.
+- QC blocks final export if the current page count no longer matches the saved target.
+
+See `docs/exact-document-page-target.md`.
+
+---
+
+
 ## v1.1.6 — Durable projects + fixed A4 layout + recovery
 
 This release addresses a production data-loss incident and the layout/QC issues found in a real 20-page research booklet.

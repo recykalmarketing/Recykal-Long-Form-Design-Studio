@@ -176,6 +176,7 @@ function blockUnits(block={},layout='editorial'){
   if(block.type==='table')return 38+Math.max(1,(block.tableRows||[]).length)*31;
   return 40;
 }
+function pageExceedsA4Budget(page={}){const layout=page.layout||'editorial';const used=(page.blocks||[]).reduce((n,b)=>n+blockUnits(b,layout),0);return used>pageCapacity(layout)*1.04;}
 function splitWordsToLimit(text='',maxChars=1000){
   const words=String(text).trim().split(/\s+/).filter(Boolean);if(!words.length)return[];const out=[];let cur='';for(const w of words){const next=(cur+' '+w).trim();if(cur&&next.length>maxChars){out.push(cur);cur=w}else cur=next}if(cur)out.push(cur);return out;
 }
@@ -207,6 +208,14 @@ function splitPageToA4(page){
 }
 export function enforceA4DocumentPages(project){
   if(project.type!=='document')return project;
+  const target=normalizedTargetPageCount(project.settings?.targetPageCount,project.type);
+  if(target){
+    // Exact-count projects are page-budgeted during generation. Do not silently create
+    // extra physical pages here; QC will block any page that still exceeds A4 capacity.
+    project.pages=(project.pages||[]).map(p=>({...p,a4:{format:'A4',orientation:'portrait',fixed:true,exactPageTarget:true}}));
+    project.settings={...(project.settings||{}),targetPageCount:target,pageFormat:'A4',pageOrientation:'portrait',fixedPageSize:true};
+    return project;
+  }
   const out=[];for(const p of project.pages||[])out.push(...splitPageToA4(p));project.pages=out;project.settings={...(project.settings||{}),pageFormat:'A4',pageOrientation:'portrait',fixedPageSize:true};return project;
 }
 function applyLayoutIntelligence(project) {
@@ -268,7 +277,13 @@ async function materializeAutoImages(project, onProgress=null) {
   return project;
 }
 
-function generationInstruction({ type, prompt, parsedFile, contentMode, audience, tone, language, research, visualStyle, deckStyle='auto', themeId='recykal-core', projectPalette=[], imageSource='mixed', artStyleId='auto', customArtStyle='', imageVariations=1, styleReferences=[], template, knowledge=[], approvedOutline=null }) {
+function normalizedTargetPageCount(value,type='document'){
+  if(type!=='document'||value==null||value==='')return null;
+  const n=Math.floor(Number(value));
+  return Number.isFinite(n)&&n>=1?Math.min(500,n):null;
+}
+
+function generationInstruction({ type, prompt, parsedFile, contentMode, audience, tone, language, research, visualStyle, deckStyle='auto', themeId='recykal-core', projectPalette=[], imageSource='mixed', artStyleId='auto', customArtStyle='', imageVariations=1, styleReferences=[], template, knowledge=[], approvedOutline=null, targetPageCount=null }) {
   const modeMap = {
     preserve: 'PRESERVE: Keep all factual content from the source. You may reorganize it for design, but do not rewrite facts or add unsupported information.',
     improve: 'IMPROVE: Improve clarity and editorial quality while preserving factual meaning. Do not introduce new claims unless clearly supported by the source.',
@@ -283,6 +298,7 @@ function generationInstruction({ type, prompt, parsedFile, contentMode, audience
   const artDirection=artStyleId==='custom' ? String(customArtStyle||'').trim() : art.prompt;
   const templateRules = template ? `\nSELECTED DESIGN SYSTEM: ${template.name}\nLAYOUT RHYTHM: ${template.sequence.join(' -> ')}\nTEMPLATE GUIDANCE: ${template.guidance}` : '';
   const knowledgeText = (knowledge||[]).map((k,i)=>`===== KNOWLEDGE ${i+1}: ${k.filename} =====\n${String(k.text||'').slice(0,120000)}`).join('\n\n');
+  const targetPages=normalizedTargetPageCount(targetPageCount,type);
   return `
 OUTPUT TYPE: ${type.toUpperCase()}
 USER BRIEF: ${prompt || 'Design the supplied content.'}
@@ -290,6 +306,7 @@ CONTENT MODE: ${modeMap[contentMode] || modeMap.generate}
 AUDIENCE: ${audience || 'Recykal marketing stakeholders'}
 TONE: ${tone || 'Professional, confident, precise'}
 LANGUAGE: ${language || 'English (India)'}
+FINAL DOCUMENT LENGTH: ${targetPages?`EXACTLY ${targetPages} A4 pages, including cover and closing pages`:'AUTO — determine the appropriate length from the brief/source'}
 VISUAL DIRECTION: ${visualStyle || 'Premium editorial, clean, contemporary, sustainability-forward without visual clichés'}
 DECK / DOCUMENT STYLE: ${deck.name}
 STYLE BEHAVIOR: ${deck.rules}
@@ -307,7 +324,7 @@ ${REFERENCE_LAYOUT_LEARNINGS}
 
 STRUCTURE RULES:
 - Return a complete structured project with title, summary, pages, and sources.
-- For DOCUMENT: do NOT target a fixed page count. Create the amount of content required by the brief/source. Long Form Design Studio has no application-level document page cap. Organize the output as continuous designable sections/pages. Do not write "Page 1" labels into content.
+- For DOCUMENT: ${targetPages?`The user has explicitly requested EXACTLY ${targetPages} final A4 pages, including the cover and any closing page. Treat this as a hard production constraint. Plan exactly ${targetPages} page roles and distribute the complete narrative/evidence across them. Do not add filler and do not silently omit source facts. Recompose, use columns/tables/infographics appropriately, and keep body text within readable long-form ranges. If Preserve mode cannot fit the authoritative source into ${targetPages} readable A4 pages, fail safely rather than dropping content.`:'No fixed page count was requested. Create the amount of content required by the brief/source with no artificial padding. Organize the output as continuous designable sections/pages.'} Do not write "Page 1" labels into content.
 - For PRESENTATION: use one clear idea per slide, strong visual hierarchy, and varied layout types. Include speaker notes only when useful.
 - For GRAPHIC: return exactly one page. Keep copy concise, visual-first and production suitable.
 - Every block must use one of the supported block types. Use stat/chart/table only when the content supports it. For chart blocks choose chartType by the analytical question: bar/dot for category comparison, line for time, scatter for relationship. For scatter, use data.x as the independent numeric variable and data.value as the dependent variable; for other charts data.x may simply be the sequence index. Use a TABLE block with tableHeaders/tableRows for exact lookup or when preserving source tables, including text values. Never convert a source table into a chart unless that transformation improves the analytical task without losing values/context.
@@ -319,7 +336,7 @@ STRUCTURE RULES:
 - Apply accessibility, data-integrity, image-quality and production gates from the Design Intelligence Knowledge Base.
 - For file-based design, validate completeness against source and flag low extraction confidence rather than guessing.
 - PAGE FILL / DENSITY: Avoid accidental dead space. For ordinary narrative/evidence pages, target roughly 68–88% meaningful visual occupancy. Sparse pages are allowed only when they are intentional opening, divider, quote, pause or closing pages. If content is dense, recompose into 2 columns, tables, stat grids or evidence panels instead of shrinking type.
-- A4 IS A HARD PHYSICAL CONSTRAINT: every document page must remain exactly A4 portrait (210 × 297 mm). Never increase page height to fit content. If content does not fit, create a continuation page.
+- A4 IS A HARD PHYSICAL CONSTRAINT: every document page must remain exactly A4 portrait (210 × 297 mm). Never increase page height to fit content. ${targetPages?'Because an exact page target is active, each planned page must fit one physical A4 sheet; rebalance content across the planned page budget instead of creating unplanned continuation pages.':'If content does not fit, create a continuation page.'}
 - COLUMNS: On A4 documents, use the 6-column editorial grid to create 1-column, 2-column or 3-module compositions according to content. Use 2 text columns for dense body narrative; use 3 columns only for short cards/facts, never for long paragraphs. A two-column decision changes composition only, never physical page dimensions.
 - TABLES: Preserve every source cell. Use one stable column grid, content-aware column widths, a clear repeated header row, content-driven row heights, right/tabular alignment for numeric values, first-column emphasis when it helps scanning, and restrained horizontal rules rather than boxing every cell. Never truncate or ellipsize critical values. For very wide A4 tables, split columns into readable continuation groups while repeating the identifying first column; do not shrink table text below readable size.
 - INFOGRAPHICS: Whenever content expresses sequence, chronology, comparison, system architecture or grouped facts, prefer a process/timeline/comparison/stat layout rather than plain paragraphs. Use native vector lines, nodes, arrows and relevant icons.
@@ -424,7 +441,7 @@ function projectOptionsFromGeneration(options={}){
     sourceFile: options.parsedFile ? { filename:options.parsedFile.filename, kind:options.parsedFile.kind, metadata:options.parsedFile.metadata, assets:options.parsedFile.assets||[], uploadId:options.parsedFile.uploadId||null, extractionConfidence:options.parsedFile.extractionConfidence||options.parsedFile.metadata?.extractionConfidence||null } : null,
     inputMode: options.parsedFile ? 'file' : 'prompt',
     contentMode: options.contentMode,
-    settings:{ audience:options.audience, tone:options.tone, language:options.language, visualStyle:options.visualStyle, deckStyle:options.deckStyle||'auto', themeId:options.themeId||'recykal-core', projectPalette:normalizeProjectPalette(options.projectPalette), imageSource:options.imageSource||'mixed', artStyleId:options.artStyleId||'auto', customArtStyle:options.customArtStyle||'', imageVariations:Math.max(1,Math.min(3,Number(options.imageVariations)||1)), styleReferences:options.styleReferences||[], masterFields:{headerText:'',footerText:'',pageNumbers:true,logoMode:'cover-only'}, research:options.contentMode==='preserve'?false:Boolean(options.research), templateId:options.template?.id||null, templateName:options.template?.name||null, knowledgeIds:(options.knowledge||[]).map(k=>k.id), approvedAssets:(options.knowledge||[]).flatMap(k=>k.assets||[]).slice(0,60) }
+    settings:{ audience:options.audience, tone:options.tone, language:options.language, visualStyle:options.visualStyle, deckStyle:options.deckStyle||'auto', themeId:options.themeId||'recykal-core', projectPalette:normalizeProjectPalette(options.projectPalette), imageSource:options.imageSource||'mixed', artStyleId:options.artStyleId||'auto', customArtStyle:options.customArtStyle||'', imageVariations:Math.max(1,Math.min(3,Number(options.imageVariations)||1)), styleReferences:options.styleReferences||[], targetPageCount:normalizedTargetPageCount(options.targetPageCount,options.type), masterFields:{headerText:'',footerText:'',pageNumbers:true,logoMode:'cover-only'}, research:options.contentMode==='preserve'?false:Boolean(options.research), templateId:options.template?.id||null, templateName:options.template?.name||null, knowledgeIds:(options.knowledge||[]).map(k=>k.id), approvedAssets:(options.knowledge||[]).flatMap(k=>k.assets||[]).slice(0,60) }
   };
 }
 
@@ -454,6 +471,7 @@ function mergeSources(existing=[],incoming=[]){
 }
 
 async function generatePlannedPage(options,project,item,index,total,onProgress){
+  const exactTarget=normalizedTargetPageCount(options.targetPageCount,options.type);
   const ruleSource=options.parsedFile?{...options.parsedFile,text:'',assets:[]}:null;
   const globalRules=generationInstruction({...options,parsedFile:ruleSource,knowledge:[],approvedOutline:null});
   const prior=compactPageContext(project.pages);
@@ -463,18 +481,20 @@ async function generatePlannedPage(options,project,item,index,total,onProgress){
     const sourceMax=attempt===1?32000:attempt===2?20000:12000;
     const source=relevantSourceContext(options,item,index,total,sourceMax);
     const knowledge=relevantKnowledgeContext(options,item,attempt===1?12000:7000);
-    const conservative=attempt>1?`\nRECOVERY PASS ${attempt}: Keep the page response compact. Prefer fewer, complete blocks over long prose. Never truncate a string, table cell, list item or JSON field. Preserve all critical source facts assigned to this page.`:'';
-    const input=`Generate exactly ONE ${options.type==='presentation'?'slide':options.type==='graphic'?'graphic canvas':'designed document page/section'} as item ${index+1} of ${total}. This request is deliberately page-scoped: never return the full project.\n\nPLANNED PAGE:\nTitle: ${item?.title||`Page ${index+1}`}\nRole: ${item?.role||'narrative'}\nRequired layout: ${item?.layout||'editorial'}\nVisual treatment: ${item?.visualTreatment||'Use the design intelligence rules'}\nPurpose: ${item?.purpose||''}\n\nPROJECT TITLE: ${project.title}\nPROJECT SUMMARY/STRATEGY: ${project.summary}\nRECENT COMPLETED PAGES (avoid repetition and maintain continuity):\n${JSON.stringify(prior)}\n\n${globalRules}\n\n${source?`AUTHORITATIVE SOURCE EXCERPTS FOR THIS PAGE:\n${source}\n`:''}${knowledge?`\nRELEVANT RECYKAL KNOWLEDGE CONTEXT:\n${knowledge}\n`:''}${conservative}\n\nPAGE-SCOPED RULES:\n- Return one page and its sources only.\n- Follow the planned role/layout unless source fidelity makes a small safe adjustment necessary.\n- Do not duplicate prior-page content.\n- If this page contains a source table, preserve its cells and units; use a table block.\n- If content is sequential/chronological/comparative, use process/timeline/comparison structure rather than plain paragraphs.\n- For image needs, create image blocks with specific imagePrompt and altText, not fake URLs.\n- Never invent metrics, citations, quotations, people, dates or product claims.\n- Keep body copy readable; use columns or additional pages rather than tiny type. For A4 long-form, use a role-led scale: page H1 about 20–28 pt, H2 14–18 pt, H3 11–14 pt, lead 11–13 pt, body 9.5–10.5 pt, captions/tables 7.5–9 pt. Keep body leading roughly 1.35–1.5× and sustained line length around 50–75 characters. A document page must fit an A4 portrait sheet with no vertical growth or overflow; continue onto another page when needed.\n- Do not put the Recykal logo into page content; the master renderer handles the logo on the cover only.`;
+    const conservative=attempt>1?`\nRECOVERY PASS ${attempt}: Keep the page response compact. Prefer fewer, complete blocks over long prose. Never truncate a string, table cell, list item or JSON field. Preserve all critical source facts assigned to this page.${exactTarget?' This project has an exact final page target, so this planned page must fit one A4 sheet without creating an extra continuation page.':''}`:'';
+    const input=`Generate exactly ONE ${options.type==='presentation'?'slide':options.type==='graphic'?'graphic canvas':'designed document page/section'} as item ${index+1} of ${total}. This request is deliberately page-scoped: never return the full project.\n\nPLANNED PAGE:\nTitle: ${item?.title||`Page ${index+1}`}\nRole: ${item?.role||'narrative'}\nRequired layout: ${item?.layout||'editorial'}\nVisual treatment: ${item?.visualTreatment||'Use the design intelligence rules'}\nPurpose: ${item?.purpose||''}\n\nPROJECT TITLE: ${project.title}\nPROJECT SUMMARY/STRATEGY: ${project.summary}\nRECENT COMPLETED PAGES (avoid repetition and maintain continuity):\n${JSON.stringify(prior)}\n\n${globalRules}\n\n${source?`AUTHORITATIVE SOURCE EXCERPTS FOR THIS PAGE:\n${source}\n`:''}${knowledge?`\nRELEVANT RECYKAL KNOWLEDGE CONTEXT:\n${knowledge}\n`:''}${conservative}\n\nPAGE-SCOPED RULES:\n- Return one page and its sources only.\n- Follow the planned role/layout unless source fidelity makes a small safe adjustment necessary.\n- Do not duplicate prior-page content.\n- If this page contains a source table, preserve its cells and units; use a table block.\n- If content is sequential/chronological/comparative, use process/timeline/comparison structure rather than plain paragraphs.\n- For image needs, create image blocks with specific imagePrompt and altText, not fake URLs.\n- Never invent metrics, citations, quotations, people, dates or product claims.\n- Keep body copy readable; use columns or additional planned pages rather than tiny type. For A4 long-form, use a role-led scale: page H1 about 20–28 pt, H2 14–18 pt, H3 11–14 pt, lead 11–13 pt, body 9.5–10.5 pt, captions/tables 7.5–9 pt. Keep body leading roughly 1.35–1.5× and sustained line length around 50–75 characters. A document page must fit an A4 portrait sheet with no vertical growth or overflow; ${exactTarget?'this exact-count page must fit one A4 sheet and must not create an unplanned continuation page.':'continue onto another page when needed.'}\n- Do not put the Recykal logo into page content; the master renderer handles the logo on the cover only.`;
     try{
       const raw=await structuredResponse({name:'recykal_incremental_page',schema:generatedPageResultSchema,research:allowResearch,input,maxOutputTokens:attempt===1?12000:8000,attempts:1});
       if(!raw?.page)throw new Error('Studio AI returned no page.');
       const page=normalizePage({...raw.page,title:raw.page.title||item?.title||`Page ${index+1}`,layout:raw.page.layout||item?.layout||'editorial'});
+      if(options.type==='document'&&exactTarget&&pageExceedsA4Budget(page)){const fitError=new Error(`Page ${index+1} exceeds the readable A4 content budget for the exact ${exactTarget}-page target.`);fitError.code='EXACT_PAGE_BUDGET';throw fitError;}
       return {page,sources:raw.sources||[]};
     }catch(err){
       lastError=err; if(attempt<3)await onProgress({stage:'retry',index,total,attempt:attempt+1,message:`Page ${index+1} needed a safe retry. Completed pages are preserved.`});
     }
   }
-  const error=new Error(`Page ${index+1} could not be completed after 3 safe retries. Completed pages have been preserved so you can resume instead of starting over.`);error.cause=lastError;error.projectId=project.id;throw error;
+  const message=exactTarget&&lastError?.code==='EXACT_PAGE_BUDGET'?`Page ${index+1} could not fit the exact ${exactTarget}-page A4 budget at a readable type size after 3 attempts. Increase the final page target or choose Condense mode; completed pages have been preserved.`:`Page ${index+1} could not be completed after 3 safe retries. Completed pages have been preserved so you can resume instead of starting over.`;
+  const error=new Error(message);error.cause=lastError;error.projectId=project.id;throw error;
 }
 
 function streamedPagesFromJson(text='') {
@@ -497,7 +517,7 @@ async function finalizeGeneratedProject(data, options, {onProgress=null}={}) {
     type:options.type,
     sourceFile: options.parsedFile ? { filename:options.parsedFile.filename, kind:options.parsedFile.kind, metadata:options.parsedFile.metadata, assets:options.parsedFile.assets||[], uploadId:options.parsedFile.uploadId||null, extractionConfidence:options.parsedFile.extractionConfidence||options.parsedFile.metadata?.extractionConfidence||null } : null,
     inputMode: options.parsedFile ? 'file' : 'prompt', contentMode: options.contentMode,
-    settings:{ audience:options.audience, tone:options.tone, language:options.language, visualStyle:options.visualStyle, deckStyle:options.deckStyle||'auto', themeId:options.themeId||'recykal-core', projectPalette:normalizeProjectPalette(options.projectPalette), imageSource:options.imageSource||'mixed', artStyleId:options.artStyleId||'auto', customArtStyle:options.customArtStyle||'', imageVariations:Math.max(1,Math.min(3,Number(options.imageVariations)||1)), styleReferences:options.styleReferences||[], masterFields:{headerText:'',footerText:'',pageNumbers:true,logoMode:'cover-only'}, research:options.contentMode==='preserve'?false:Boolean(options.research), templateId:options.template?.id||null, templateName:options.template?.name||null, knowledgeIds:(options.knowledge||[]).map(k=>k.id), approvedAssets:(options.knowledge||[]).flatMap(k=>k.assets||[]).slice(0,60) }
+    settings:{ audience:options.audience, tone:options.tone, language:options.language, visualStyle:options.visualStyle, deckStyle:options.deckStyle||'auto', themeId:options.themeId||'recykal-core', projectPalette:normalizeProjectPalette(options.projectPalette), imageSource:options.imageSource||'mixed', artStyleId:options.artStyleId||'auto', customArtStyle:options.customArtStyle||'', imageVariations:Math.max(1,Math.min(3,Number(options.imageVariations)||1)), styleReferences:options.styleReferences||[], targetPageCount:normalizedTargetPageCount(options.targetPageCount,options.type), masterFields:{headerText:'',footerText:'',pageNumbers:true,logoMode:'cover-only'}, research:options.contentMode==='preserve'?false:Boolean(options.research), templateId:options.template?.id||null, templateName:options.template?.name||null, knowledgeIds:(options.knowledge||[]).map(k=>k.id), approvedAssets:(options.knowledge||[]).flatMap(k=>k.assets||[]).slice(0,60) }
   });
   project=applyLayoutIntelligence(project); if(onProgress)await onProgress({stage:'layout',project});
   project.qc=await qualityControlProject(project,{parsedFile:options.parsedFile}); if(onProgress)await onProgress({stage:'qc',qc:project.qc,project});
@@ -557,6 +577,8 @@ export async function generateProjectStream(options, onProgress=async()=>{}) {
     planTitle=options.prompt||options.parsedFile?.filename||'Long Form Design Studio project';
     planStrategy='Approved design plan';
   }
+  const exactTarget=normalizedTargetPageCount(options.targetPageCount,options.type);
+  if(exactTarget)planItems=reconcileOutlineToTarget(planItems,exactTarget);
   if(options.type==='graphic')planItems=planItems.slice(0,1);
   if(!planItems.length)throw new Error('Studio AI could not create a usable design plan. Please adjust the brief and try again.');
 
@@ -579,6 +601,7 @@ export async function generateProjectStream(options, onProgress=async()=>{}) {
     // Finalization can inspect the complete project, but it is not allowed to regenerate
     // the whole project as a single huge JSON response. QC and visual materialization are separate passes.
     const finalized=await finalizeGeneratedProject(project,{...options,incremental:true},{onProgress});
+    if(exactTarget&&finalized.pages.length!==exactTarget)throw new Error(`Exact page target integrity check failed: requested ${exactTarget} A4 pages but the project contains ${finalized.pages.length}. Completed pages are preserved; adjust the design plan or page target before final export.`);
     finalized.generation={...project.generation,status:'complete',completed:finalized.pages.length,total:planItems.length,finishedAt:new Date().toISOString(),lastError:''};
     if(typeof options.checkpoint==='function')await options.checkpoint(finalized,{stage:'complete'});
     await onProgress({stage:'complete',project:finalized});return finalized;
@@ -683,10 +706,43 @@ export async function reflowProject(project, deckStyle='auto', themeId=null) {
   return applyLayoutIntelligence(next);
 }
 
+function reconcileOutlineToTarget(items=[],target=null){
+  const n=Number(target);const clean=(items||[]).filter(Boolean).map(x=>({...x}));
+  if(!Number.isInteger(n)||n<1)return clean;
+  if(!clean.length)return Array.from({length:n},(_,i)=>({title:i===0?'Opening':i===n-1?'Closing':`Section ${i+1}`,role:i===0?'opening':i===n-1?'closing':'narrative',layout:i===0?'cover':i===n-1?'closing':'editorial',visualTreatment:i===0?'Strong cover hierarchy':'Editorial A4 composition',purpose:i===0?'Orient the reader':i===n-1?'Resolve the narrative':'Develop the approved brief without filler'}));
+  if(clean.length===n)return clean;
+  if(clean.length>n){
+    const out=[];
+    for(let i=0;i<n;i++){
+      const start=Math.floor(i*clean.length/n),end=Math.max(start+1,Math.floor((i+1)*clean.length/n));
+      const group=clean.slice(start,end);const first=group[0];
+      out.push({...first,title:group.length===1?first.title:group.map(x=>x.title).filter(Boolean).join(' / ').slice(0,140),purpose:group.map(x=>x.purpose).filter(Boolean).join(' ').slice(0,900),visualTreatment:[...new Set(group.map(x=>x.visualTreatment).filter(Boolean))].join(' + ').slice(0,360)});
+    }
+    return out;
+  }
+  const out=[...clean];let cursor=Math.max(1,Math.min(out.length-1,1));
+  while(out.length<n){
+    const base=out[cursor%out.length]||out[out.length-1];
+    const insertAt=Math.min(out.length,Math.max(1,cursor+1));
+    out.splice(insertAt,0,{...base,title:`${String(base.title||'Section').replace(/\s*[—-]\s*continued$/i,'')} — continued`,role:'continuation',layout:['cover','closing'].includes(base.layout)?'editorial':base.layout,visualTreatment:base.visualTreatment||'Editorial continuation with a distinct composition',purpose:`Continue and deepen this section while preserving the same factual scope: ${base.purpose||base.title||'approved narrative'}`.slice(0,900)});
+    cursor+=2;
+  }
+  // Preserve a proper opening/closing role when the source plan had them.
+  if(n>1&&clean[0]?.layout==='cover')out[0]={...out[0],layout:'cover',role:clean[0].role||'opening'};
+  if(n>2&&clean[clean.length-1]?.layout==='closing')out[n-1]={...out[n-1],layout:'closing',role:clean[clean.length-1].role||'closing'};
+  return out.slice(0,n);
+}
+
 export async function generateOutline(options){
+  const target=normalizedTargetPageCount(options.targetPageCount,options.type);
   const instruction=generationInstruction({...options,approvedOutline:null});
-  const raw=await structuredResponse({name:'recykal_design_outline',schema:outlineSchema,research:options.contentMode!=='preserve'&&Boolean(options.research),input:`Create a DESIGN PLAN only, not the final asset.\n${instruction}\n\nPlan the narrative architecture and page/slide roles. For documents there is no fixed page count: create as many outline items as needed, but avoid artificial padding. Each item needs a purpose, layout and visual treatment. Preserve source sequence where it is semantically important.`});
-  return raw||{title:options.prompt||options.parsedFile?.filename||'Design plan',strategy:'Local demo plan',items:[{title:'Opening',role:'opening',layout:'cover',visualTreatment:'Strong title + visual field',purpose:'Orient the reader'},{title:'Core narrative',role:'narrative',layout:'editorial',visualTreatment:'Editorial grid',purpose:'Carry the main argument'},{title:'Evidence',role:'evidence',layout:'chart',visualTreatment:'Direct-labelled data',purpose:'Support the argument'}]};
+  const countRule=target?`The user selected an EXACT final document length of ${target} A4 pages. Return exactly ${target} outline items — one item per physical page, including cover and closing pages. Do not create filler. Allocate source evidence and narrative so every planned page can fit one readable A4 portrait sheet.`:`No exact page target was selected. Create as many outline items as the brief/source genuinely needs, without artificial padding.`;
+  const raw=await structuredResponse({name:'recykal_design_outline',schema:outlineSchema,research:options.contentMode!=='preserve'&&Boolean(options.research),maxOutputTokens:target?Math.min(32000,Math.max(9000,target*420)):16000,input:`Create a DESIGN PLAN only, not the final asset.\n${instruction}\n\nPlan the narrative architecture and page/slide roles. ${countRule} Each item needs a purpose, layout and visual treatment. Preserve source sequence where it is semantically important.`});
+  const fallback={title:options.prompt||options.parsedFile?.filename||'Design plan',strategy:target?`Exact ${target}-page A4 design plan`:'Local demo plan',items:[{title:'Opening',role:'opening',layout:'cover',visualTreatment:'Strong title + visual field',purpose:'Orient the reader'},{title:'Core narrative',role:'narrative',layout:'editorial',visualTreatment:'Editorial grid',purpose:'Carry the main argument'},{title:'Evidence',role:'evidence',layout:'chart',visualTreatment:'Direct-labelled data',purpose:'Support the argument'}]};
+  const result=raw||fallback;
+  result.items=reconcileOutlineToTarget(result.items,target);
+  if(target)result.strategy=`${result.strategy||'Design plan'} · Exact final output: ${target} A4 pages`;
+  return result;
 }
 
 export async function generatePageVariations(project,pageId){
