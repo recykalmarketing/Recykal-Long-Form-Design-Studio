@@ -23,7 +23,7 @@ export const DESIGN_KNOWLEDGE = {
   researchStructure:['Title & abstract','Research question','Context / literature','Methodology','Findings','Analysis / discussion','Limitations','Conclusion','References / appendices'],
   caseStudyArc:['Problem','Context','Evidence','Insight','Design hypothesis','Decision','Prototype','Validation','Outcome','Learning'],
   qcWeights:{ contentFidelity:20,hierarchy:15,legibility:15,consistency:10,accessibility:15,uxTaskClarity:10,visualCraft:10,exportQuality:5 },
-  deliveryThreshold:85
+  deliveryThreshold:90
 };
 
 export const designKnowledgePrompt = `
@@ -150,7 +150,7 @@ If extraction confidence is low, flag uncertainty instead of hallucinating missi
 
 QUALITY CONTROL
 Score every output before delivery: Content fidelity 20%, Hierarchy 15%, Legibility 15%, Consistency 10%, Accessibility 15%, UX/task clarity 10%, Visual craft 10%, Export quality 5%.
-Do not deliver below 85/100. Blocking defects regardless of total: content fidelity failure, accessibility-critical failure, unreadable text, clipped content, broken interaction states.
+Do not deliver below 90/100. Blocking defects regardless of total: content fidelity failure, accessibility-critical failure, unreadable text, clipped content, broken interaction states.
 Pre-export gates: correct dimensions/orientation; no clipping/overlap; no stretched type/images; sharp proportional logos; coherent headings/reading order; necessary states; contrast/accessibility pass; numbers/sources/legal copy match source; repeated elements align to same grid; requested file format is correct.
 
 ANTI-PATTERNS TO REJECT
@@ -178,7 +178,7 @@ Evaluate using these exact weights and rules:
 - uxTaskClarity 10
 - visualCraft 10
 - exportQuality 5
-Total = 100. Passing threshold = 85.
+Total = 100. Passing threshold = 90.
 Blocking defect if any: source-critical content missing/invented; accessibility-critical problem; unreadable content; likely clipping/overflow; broken interaction state.
 Be strict. Do not award points for decoration when comprehension, evidence or accessibility is weak.
 `;

@@ -17,7 +17,11 @@ services:
       - key: AUTO_QC
         value: "true"
       - key: QC_MAX_REVISIONS
-        value: "1"
+        value: "0"
+      - key: QC_PAGE_REDESIGN_ROUNDS
+        value: "2"
+      - key: QC_PAGE_REDESIGN_MAX_PAGES
+        value: "60"
       - key: MAX_SOURCE_CHARS
         value: "800000"
       - key: VISUAL_PREFLIGHT

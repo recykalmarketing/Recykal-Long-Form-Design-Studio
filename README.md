@@ -48,7 +48,7 @@ This release addresses a production data-loss incident and the layout/QC issues 
 
 ### QC improvement
 - Page-safe long-form generation no longer skips all automatic correction. If deterministic QC identifies bad pages, Studio AI can repair the worst affected pages **individually**, preserving facts/data/source content, rather than regenerating a whole 20–40 page project as one response.
-- Review exports remain available below the 85/100 final-delivery threshold.
+- Review exports remain available below the 90/100 final-delivery threshold.
 
 ### Render verification
 After deployment, open `/api/health`. A production-safe response must include:
@@ -118,8 +118,8 @@ The runtime design rules are derived from the supplied Design Bot Knowledge Base
 - The preview is working-state content; bounded QC/visual corrections may still occur before final save.
 
 ## Quality and publishing
-- 85/100 quality gate with content fidelity, hierarchy, legibility, consistency, accessibility, UX clarity, visual craft and export checks.
-- Review exports remain available below threshold and are marked DRAFT/QC REVIEW.
+- 90/100 quality gate with content fidelity, hierarchy, legibility, consistency, accessibility, UX clarity, visual craft and export checks.
+- Review exports remain available below threshold as clean artwork previews; review identity is kept in the filename, not stamped on the page.
 - Final export also passes rendered-file preflight for clipping, overflow and visual defects.
 - **Digital PDF**: standard-size RGB export, screen/email/web optimized, no production marks.
 - **Print PDF**: CMYK prepress conversion, embedded-font checks, raster effective-resolution checks and rendered visual preflight. No bleed, TrimBox/BleedBox, or crop marks are added in the current release.

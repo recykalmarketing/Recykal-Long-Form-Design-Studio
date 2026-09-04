@@ -481,7 +481,7 @@ function projectOptionsFromGeneration(options={}){
     sourceFile: options.parsedFile ? { filename:options.parsedFile.filename, kind:options.parsedFile.kind, metadata:options.parsedFile.metadata, assets:options.parsedFile.assets||[], uploadId:options.parsedFile.uploadId||null, extractionConfidence:options.parsedFile.extractionConfidence||options.parsedFile.metadata?.extractionConfidence||null } : null,
     inputMode: options.parsedFile ? 'file' : 'prompt',
     contentMode: options.contentMode,
-    settings:{ audience:options.audience, tone:options.tone, language:options.language, visualStyle:options.visualStyle, deckStyle:options.deckStyle||'auto', themeId:options.themeId||'recykal-core', projectPalette:normalizeProjectPalette(options.projectPalette), imageSource:options.imageSource||'mixed', artStyleId:options.artStyleId||'auto', customArtStyle:options.customArtStyle||'', imageVariations:Math.max(1,Math.min(3,Number(options.imageVariations)||1)), styleReferences:options.styleReferences||[], targetPageCount:normalizedTargetPageCount(options.targetPageCount,options.type), autoExpandPageTarget:options.autoExpandPageTarget!==false, masterFields:{headerText:'',footerText:'',pageNumbers:true,logoMode:'cover-only'}, research:options.contentMode==='preserve'?false:Boolean(options.research), templateId:options.template?.id||null, templateName:options.template?.name||null, knowledgeIds:(options.knowledge||[]).map(k=>k.id), approvedAssets:(options.knowledge||[]).flatMap(k=>k.assets||[]).slice(0,60) }
+    settings:{ audience:options.audience, tone:options.tone, language:options.language, visualStyle:options.visualStyle, deckStyle:options.deckStyle||'auto', themeId:options.themeId||'recykal-core', projectPalette:normalizeProjectPalette(options.projectPalette), imageSource:options.imageSource||'mixed', artStyleId:options.artStyleId||'auto', customArtStyle:options.customArtStyle||'', imageVariations:Math.max(1,Math.min(3,Number(options.imageVariations)||1)), styleReferences:options.styleReferences||[], targetPageCount:normalizedTargetPageCount(options.targetPageCount,options.type), autoExpandPageTarget:Boolean(options.autoExpandPageTarget), masterFields:{headerText:'',footerText:'',pageNumbers:true,logoMode:'cover-only'}, research:options.contentMode==='preserve'?false:Boolean(options.research), templateId:options.template?.id||null, templateName:options.template?.name||null, knowledgeIds:(options.knowledge||[]).map(k=>k.id), approvedAssets:(options.knowledge||[]).flatMap(k=>k.assets||[]).slice(0,60) }
   };
 }
 
@@ -581,7 +581,9 @@ function splitTextIntoParts(text='',parts=1){
 function deriveSourceTitle(text='',sourceIndex=1,part=1,parts=1){
   const lines=String(text||'').split(/\n+/).map(x=>x.trim()).filter(Boolean);
   const low=lines.map(x=>x.toLowerCase());let title='';
-  const drs=lines.find(x=>/deposit refund scheme/i.test(x)&&x.length<120);if(drs&&sourceIndex===1)title=drs;
+  const toc=lines.find(x=>/^(table of contents|contents)(\s*[—-]\s*continued)?$/i.test(x));if(toc)title=part>1?'Table of contents — continued':'Table of contents';
+  const glossary=lines.find(x=>/^glossary(\s*[—-]\s*continued)?$/i.test(x));if(!title&&glossary)title=part>1?'Glossary — continued':'Glossary';
+  const drs=lines.find(x=>/deposit refund scheme/i.test(x)&&x.length<120);if(!title&&drs&&sourceIndex===1)title=drs;
   if(!title){const mi=low.findIndex(x=>x==='message'||x.endsWith(' message'));if(mi>=0){title=lines.slice(mi+1).find(x=>x.length>=8&&x.length<100&&!/^(preliminary|message)$/i.test(x))||'';}}
   if(!title){const fi=low.findIndex(x=>x==='foreword');if(fi>=0)title=lines.slice(fi+1).find(x=>x.length>=8&&x.length<100)||'Foreword';}
   if(!title){const ci=low.findIndex(x=>/^chapter\s+\d+/.test(x));if(ci>=0)title=lines.slice(ci+1).find(x=>x.length>=6&&x.length<120)||lines[ci];}
@@ -610,7 +612,7 @@ function allocateSourceSlices(parsedFile={},targetPages=null){
 }
 function preferredLayoutForSourceSlice(slice={},index=0,total=1){
   const text=String(slice.text||''),low=text.toLowerCase(); if(index===0&&/deposit refund scheme|handbook|report|annual report|government of/i.test(text.slice(0,500)))return 'cover';
-  if(/table of contents|contents\b/.test(low))return 'two-column';
+  if(/table of contents|(?:^|\n)contents\b/.test(low))return 'table';
   if(/^\s*(glossary|term\s+meaning)/im.test(text))return 'table';
   if(/\b(message|foreword|chief minister|chief secretary|chairperson)\b/.test(low))return text.length>1900?'two-column':'editorial';
   if(/\b(timeline|chronology|evolution|milestone)\b/.test(low))return 'timeline';
@@ -625,6 +627,19 @@ function sourceAwarePlan(planItems=[],options={},target=null){
 function generatedTextForCoverage(page={}){return (page.blocks||[]).flatMap(b=>[b.text||'',...(b.items||[]),b.label||'',b.value||'',b.caption||'',...(b.tableHeaders||[]),...(b.tableRows||[]).flat()]).join(' ');}
 function wordCoverage(source='',output=''){
   const tok=s=>String(s||'').toLowerCase().replace(/[’‘]/g,"'").match(/[a-z0-9₹$€£%][a-z0-9₹$€£%'.-]*/g)||[];const src=tok(source),out=tok(output);if(!src.length)return 1;const counts=new Map();for(const w of out)counts.set(w,(counts.get(w)||0)+1);let hit=0;for(const w of src){const n=counts.get(w)||0;if(n>0){hit++;counts.set(w,n-1)}}return hit/src.length;
+}
+function orderedWordCoverage(source='',output=''){
+  const tok=s=>String(s||'').toLowerCase().replace(/[’‘]/g,"'").match(/[a-z0-9₹$€£%][a-z0-9₹$€£%'.-]*/g)||[];
+  const src=tok(source),out=tok(output);if(!src.length)return 1;if(!out.length)return 0;
+  let oi=0,hit=0;for(const sw of src){while(oi<out.length&&out[oi]!==sw)oi++;if(oi<out.length){hit++;oi++;}}
+  return hit/src.length;
+}
+function sourceStructureHints(text=''){
+  const low=String(text||'').toLowerCase();return {
+    toc:/table of contents|(?:^|\n)contents\b/.test(low),
+    glossary:/(?:^|\n)glossary\b/.test(low),
+    message:/\b(message|foreword|chief minister|chief secretary|chairperson)\b/.test(low)
+  };
 }
 function sourceFallbackBlocks(text='',title='Source'){const lines=String(text||'').split(/\n+/).map(x=>x.trim()).filter(Boolean);const blocks=[];let headingUsed=false,body=[];for(const line of lines){const allCaps=line.length<110&&/[A-Z]/.test(line)&&line===line.toUpperCase();if(!headingUsed&&allCaps){if(!blocks.length)blocks.push(normalizeBlock({type:'kicker',text:line}));else blocks.push(normalizeBlock({type:'heading',text:line}));headingUsed=true;continue}body.push(line)}if(!blocks.some(b=>b.type==='heading'))blocks.push(normalizeBlock({type:'heading',text:title}));const joined=body.join(' ');for(const part of splitWordsToLimit(joined,900))blocks.push(normalizeBlock({type:'paragraph',text:part}));return blocks;}
 function sourceFaithfulFallbackPage(item={},index=0,total=1){const text=String(item.sourceSliceText||'').trim(),layout=preferredLayoutForSourceSlice({text},index,total);return normalizePage({title:item.title||`Page ${index+1}`,layout,blocks:sourceFallbackBlocks(text,item.title||`Page ${index+1}`),speakerNotes:''});}
@@ -661,14 +676,16 @@ async function generatePlannedPage(options,project,item,index,total,onProgress){
     const source=item?.sourceSliceText?String(item.sourceSliceText):relevantSourceContext(options,item,index,total,sourceMax);
     const knowledge=relevantKnowledgeContext(options,item,attempt===1?12000:7000);
     const conservative=attempt>1?`\nRECOVERY PASS ${attempt}: Keep the page response compact. Prefer fewer, complete blocks over long prose. Never truncate a string, table cell, list item or JSON field. Preserve all critical source facts assigned to this page.${exactTarget?' This project has an exact final page target, so this planned page must fit one A4 sheet without creating an extra continuation page.':''}`:'';
-    const input=`Generate exactly ONE ${options.type==='presentation'?'slide':options.type==='graphic'?'graphic canvas':'designed document page/section'} as item ${index+1} of ${total}. This request is deliberately page-scoped: never return the full project.\n\nPLANNED PAGE:\nTitle: ${item?.title||`Page ${index+1}`}\nRole: ${item?.role||'narrative'}\nRequired layout: ${item?.layout||'editorial'}\nVisual treatment: ${item?.visualTreatment||'Use the design intelligence rules'}\nPurpose: ${item?.purpose||''}\n\nPROJECT TITLE: ${project.title}\nPROJECT SUMMARY/STRATEGY: ${project.summary}\nRECENT COMPLETED PAGES (avoid repetition and maintain continuity):\n${JSON.stringify(prior)}\n\n${globalRules}\n\n${source?`AUTHORITATIVE SOURCE EXCERPTS FOR THIS PAGE:\n${source}\n`:''}${knowledge?`\nRELEVANT RECYKAL KNOWLEDGE CONTEXT:\n${knowledge}\n`:''}${conservative}\n\nPAGE-SCOPED RULES:\n- Return one page and its sources only.\n- Follow the planned role/layout unless source fidelity makes a small safe adjustment necessary.\n- Do not duplicate prior-page content.\n- If this page contains a source table, preserve its cells and units; use a table block.\n- If content is sequential/chronological/comparative, use process/timeline/comparison structure rather than plain paragraphs.\n- For image needs, create image blocks with specific imagePrompt and altText, not fake URLs.\n- Never invent metrics, citations, quotations, people, dates or product claims.\n- Keep body copy readable; use columns or additional planned pages rather than tiny type. For A4 long-form, use a role-led scale: page H1 about 20–28 pt, H2 14–18 pt, H3 11–14 pt, lead 11–13 pt, body 9.5–10.5 pt, captions/tables 7.5–9 pt. Keep body leading roughly 1.35–1.5× and sustained line length around 50–75 characters. A document page must fit an A4 portrait sheet with no vertical growth or overflow; ${exactTarget?'this exact-count page must fit one A4 sheet and must not create an unplanned continuation page.':'continue onto another page when needed.'}\n- Do not put the Recykal logo into page content; the master renderer handles the logo on the cover only.`;
+    const input=`Generate exactly ONE ${options.type==='presentation'?'slide':options.type==='graphic'?'graphic canvas':'designed document page/section'} as item ${index+1} of ${total}. This request is deliberately page-scoped: never return the full project.\n\nPLANNED PAGE:\nTitle: ${item?.title||`Page ${index+1}`}\nRole: ${item?.role||'narrative'}\nRequired layout: ${item?.layout||'editorial'}\nVisual treatment: ${item?.visualTreatment||'Use the design intelligence rules'}\nPurpose: ${item?.purpose||''}\n\nPROJECT TITLE: ${project.title}\nPROJECT SUMMARY/STRATEGY: ${project.summary}\nRECENT COMPLETED PAGES (avoid repetition and maintain continuity):\n${JSON.stringify(prior)}\n\n${globalRules}\n\n${source?`AUTHORITATIVE SOURCE EXCERPTS FOR THIS PAGE:\n${source}\n`:''}${knowledge?`\nRELEVANT RECYKAL KNOWLEDGE CONTEXT:\n${knowledge}\n`:''}${conservative}\n\nPAGE-SCOPED RULES:\n- Return one page and its sources only.\n- Follow the planned role/layout unless source fidelity makes a small safe adjustment necessary.\n- Do not duplicate prior-page content.\n- PRESERVE MODE STRUCTURE LOCK: when authoritative source text is supplied, keep its reading order. Do not move later source paragraphs, list items or table rows ahead of earlier material. Do not manufacture a page headline from an incidental TOC/glossary entry. Preserve explicit structural labels such as TABLE OF CONTENTS, GLOSSARY, MESSAGE, FOREWORD, CHAPTER and PART.\n- For TABLE OF CONTENTS / CONTENTS pages, use a table block with SECTION / PAGE (or an equally clean contents grid); never promote a random contents entry into the page headline.\n- For glossary pages, keep TERM / DEFINITION pairings intact and in source order.\n- Keep each numbered/bulleted item with its own explanation; never strand an item label on one page and its explanation on another unless the source itself continues it.\n- If this page contains a source table, preserve its cells and units; use a table block.\n- If content is sequential/chronological/comparative, use process/timeline/comparison structure rather than plain paragraphs.\n- For image needs, create image blocks with specific imagePrompt and altText, not fake URLs.\n- Never invent metrics, citations, quotations, people, dates or product claims.\n- Keep body copy readable; use columns or additional planned pages rather than tiny type. For A4 long-form, use a role-led scale: page H1 about 20–28 pt, H2 14–18 pt, H3 11–14 pt, lead 11–13 pt, body 9.5–10.5 pt, captions/tables 7.5–9 pt. Keep body leading roughly 1.35–1.5× and sustained line length around 50–75 characters. A document page must fit an A4 portrait sheet with no vertical growth or overflow; ${exactTarget?'this exact-count page must fit one A4 sheet and must not create an unplanned continuation page.':'continue onto another page when needed.'}\n- Do not put the Recykal logo into page content; the master renderer handles the logo on the cover only.`;
     try{
       const raw=await structuredResponse({name:'recykal_incremental_page',schema:generatedPageResultSchema,research:allowResearch,input,maxOutputTokens:attempt===1?12000:8000,attempts:1});
       if(!raw?.page)throw new Error('Studio AI returned no page.');
       let page=normalizePage({...raw.page,title:raw.page.title||item?.title||`Page ${index+1}`,layout:raw.page.layout||item?.layout||'editorial'});
       if(options.contentMode==='preserve'&&item?.sourceSliceText){
-        const coverage=wordCoverage(item.sourceSliceText,generatedTextForCoverage(page));
-        if(coverage<0.78){const fidelityError=new Error(`Page ${index+1} preserved only ${Math.round(coverage*100)}% of its assigned source content.`);fidelityError.code='SOURCE_PAGE_FIDELITY';fidelityError.coverage=coverage;throw fidelityError;}
+        const generated=generatedTextForCoverage(page);const coverage=wordCoverage(item.sourceSliceText,generated);const ordered=orderedWordCoverage(item.sourceSliceText,generated);
+        if(coverage<0.80){const fidelityError=new Error(`Page ${index+1} preserved only ${Math.round(coverage*100)}% of its assigned source content.`);fidelityError.code='SOURCE_PAGE_FIDELITY';fidelityError.coverage=coverage;throw fidelityError;}
+        if(ordered<0.68){const fidelityError=new Error(`Page ${index+1} changed the authoritative source reading order too aggressively (${Math.round(ordered*100)}% ordered alignment).`);fidelityError.code='SOURCE_PAGE_ORDER';fidelityError.coverage=ordered;throw fidelityError;}
+        const hints=sourceStructureHints(item.sourceSliceText);if((hints.toc||hints.glossary)&&page.layout!=='table')page.layout='table';
         // A dense message/foreword must never collapse into a decorative quote-only page.
         if(page.layout==='quote'&&String(item.sourceSliceText).length>900)page.layout=preferredLayoutForSourceSlice({text:item.sourceSliceText},index,total);
       }
@@ -702,16 +719,87 @@ function streamedPagesFromJson(text='') {
   return out;
 }
 
+export async function autoRedesignPagesToQc(project,options,{onProgress=null,maxRounds=null}={}){
+  const ai=client();if(!ai||project.qc?.pass)return project;
+  const rounds=Math.max(1,Math.min(3,Number(maxRounds??process.env.QC_PAGE_REDESIGN_ROUNDS??2)));
+  const pageLimit=Math.max(1,Math.min(120,Number(process.env.QC_PAGE_REDESIGN_MAX_PAGES||60)));
+  const sourceSlices=(options.contentMode==='preserve'&&options.parsedFile)?allocateSourceSlices(options.parsedFile,project.pages?.length||null):[];
+  for(let round=1;round<=rounds&&!project.qc?.pass;round++){
+    const pageIssues=project.qc?.staticIssues||project.qc?.issues||[];
+    const priority=[...new Set(pageIssues.filter(x=>Number.isInteger(x.pageIndex)).map(x=>x.pageIndex))];
+    const rest=(project.pages||[]).map((_,i)=>i).filter(i=>!priority.includes(i));
+    // If project QC is below threshold, redesign the full publication page-by-page, not only the first few flagged pages.
+    const candidates=[...priority,...rest].filter(i=>!project.pages?.[i]?.locked).slice(0,pageLimit);
+    if(onProgress)await onProgress({stage:'auto-redesign-start',round,total:candidates.length,qc:project.qc,message:`QC is ${Math.round(project.qc?.totalScore||0)}/100. Automatically redesigning ${candidates.length} page(s), page by page, toward the ${DESIGN_KNOWLEDGE.deliveryThreshold}/100 gate.`});
+    for(let ci=0;ci<candidates.length;ci++){
+      const pageIndex=candidates[ci],original=project.pages?.[pageIndex];if(!original)continue;
+      const specific=pageIssues.filter(x=>x.pageIndex===pageIndex).map(x=>`${x.severity||'warning'}: ${x.message}`);
+      const global=[...(project.qc?.recommendations||[]).slice(0,8),project.qc?.summary||''].filter(Boolean);
+      const sourceSlice=sourceSlices[pageIndex]?.text||'';
+      const neighbor={previous:project.pages?.[pageIndex-1]?compactPageContext([project.pages[pageIndex-1]])[0]:null,next:project.pages?.[pageIndex+1]?compactPageContext([project.pages[pageIndex+1]])[0]:null};
+      if(onProgress)await onProgress({stage:'auto-redesign-page',round,pageIndex,current:ci+1,total:candidates.length,message:`Redesigning page ${pageIndex+1} of ${project.pages.length} after QC…`});
+      try{
+        const revised=await structuredResponse({name:'recykal_page_auto_redesign',schema:pageSchema,research:false,maxOutputTokens:9000,attempts:2,input:`You are the automatic post-QC page designer for Recykal Long Form Design Studio. Redesign exactly ONE A4 portrait page. The project has already failed the quality gate, so this is a corrective production pass, not a cosmetic variation.
+
+TARGET QUALITY GATE: ${DESIGN_KNOWLEDGE.deliveryThreshold}/100 or higher with zero blocking defects.
+PAGE: ${pageIndex+1} of ${project.pages.length}
+PROJECT STYLE: ${project.settings?.deckStyle||'auto'}
+THEME: ${project.settings?.themeId||'recykal-core'}
+
+PAGE-SPECIFIC QC:
+${specific.length?specific.join('\n'):'No deterministic page-specific defect was recorded; improve structure, spacing, hierarchy, alignment, information grouping and visual relevance because the overall project score is below threshold.'}
+
+PROJECT-LEVEL QC:
+${global.join('\n')}
+
+CURRENT PAGE JSON:
+${JSON.stringify(original)}
+
+NEIGHBOR CONTEXT (maintain continuity; do not duplicate):
+${JSON.stringify(neighbor)}${sourceSlice?`\n\nAUTHORITATIVE SOURCE ASSIGNED TO THIS PAGE (reading order is locked):\n${sourceSlice.slice(0,26000)}`:''}
+
+NON-NEGOTIABLE PRODUCTION RULES:
+- Preserve every factual claim, name, number, date, unit, citation, table cell and chart datum.
+- In preserve mode, preserve the authoritative source reading order. Do not move later source material before earlier material.
+- Keep one semantic item together: never separate a numbered/list label from its explanation.
+- TABLE OF CONTENTS / CONTENTS must remain a contents structure; GLOSSARY must keep term-definition pairing; do not promote incidental entries into the page headline.
+- Use a relevant visual only when it genuinely explains/supports the page. Avoid decorative or unrelated imagery. Image blocks need a specific prompt and alt text.
+- Fix alignment, margins, grid, spacing, hierarchy and grouping. Avoid accidental dead space and avoid crowding.
+- A4 portrait is fixed. Do not increase page height and do not shrink body text below 9.5 pt to force fit. Use two-column/table/process/comparison layouts only when semantically justified.
+- Keep the Recykal logo out of page blocks; the master renderer handles it.
+- Return only the replacement page schema.`});
+        if(!revised)continue;
+        let repaired=inheritPageFormatting(original,normalizePage({...revised,id:original.id,title:revised.title||original.title}));
+        if(options.contentMode==='preserve'&&sourceSlice){
+          const out=generatedTextForCoverage(repaired),coverage=wordCoverage(sourceSlice,out),ordered=orderedWordCoverage(sourceSlice,out);
+          if(coverage<0.80||ordered<0.68){
+            // Never accept a visually prettier page that damages the authoritative source.
+            repaired=sourceFaithfulFallbackPage({title:sourceSlices[pageIndex]?.title||original.title,sourceSliceText:sourceSlice},pageIndex,project.pages.length);repaired.id=original.id;
+          }
+        }else{
+          // Non-preserve repair still cannot silently drop the existing page's factual payload.
+          const before=generatedTextForCoverage(original),after=generatedTextForCoverage(repaired);if(before&&wordCoverage(before,after)<0.86)continue;
+        }
+        project.pages[pageIndex]=repaired;
+      }catch{}
+    }
+    project=applyLayoutIntelligence(project);
+    project.qc=await qualityControlProject(project,{parsedFile:options.parsedFile});
+    if(onProgress)await onProgress({stage:'auto-redesign-qc',round,qc:project.qc,project,message:`Automatic redesign round ${round} completed: ${Math.round(project.qc?.totalScore||0)}/100.`});
+  }
+  return project;
+}
+
 async function finalizeGeneratedProject(data, options, {onProgress=null}={}) {
   let project = normalizeProject(data, {
     type:options.type,
     sourceFile: options.parsedFile ? { filename:options.parsedFile.filename, kind:options.parsedFile.kind, metadata:options.parsedFile.metadata, assets:options.parsedFile.assets||[], uploadId:options.parsedFile.uploadId||null, extractionConfidence:options.parsedFile.extractionConfidence||options.parsedFile.metadata?.extractionConfidence||null } : null,
     inputMode: options.parsedFile ? 'file' : 'prompt', contentMode: options.contentMode,
-    settings:{ audience:options.audience, tone:options.tone, language:options.language, visualStyle:options.visualStyle, deckStyle:options.deckStyle||'auto', themeId:options.themeId||'recykal-core', projectPalette:normalizeProjectPalette(options.projectPalette), imageSource:options.imageSource||'mixed', artStyleId:options.artStyleId||'auto', customArtStyle:options.customArtStyle||'', imageVariations:Math.max(1,Math.min(3,Number(options.imageVariations)||1)), styleReferences:options.styleReferences||[], targetPageCount:normalizedTargetPageCount(options.targetPageCount,options.type), autoExpandPageTarget:options.autoExpandPageTarget!==false, masterFields:{headerText:'',footerText:'',pageNumbers:true,logoMode:'cover-only'}, research:options.contentMode==='preserve'?false:Boolean(options.research), templateId:options.template?.id||null, templateName:options.template?.name||null, knowledgeIds:(options.knowledge||[]).map(k=>k.id), approvedAssets:(options.knowledge||[]).flatMap(k=>k.assets||[]).slice(0,60) }
+    settings:{ audience:options.audience, tone:options.tone, language:options.language, visualStyle:options.visualStyle, deckStyle:options.deckStyle||'auto', themeId:options.themeId||'recykal-core', projectPalette:normalizeProjectPalette(options.projectPalette), imageSource:options.imageSource||'mixed', artStyleId:options.artStyleId||'auto', customArtStyle:options.customArtStyle||'', imageVariations:Math.max(1,Math.min(3,Number(options.imageVariations)||1)), styleReferences:options.styleReferences||[], targetPageCount:normalizedTargetPageCount(options.targetPageCount,options.type), autoExpandPageTarget:Boolean(options.autoExpandPageTarget), masterFields:{headerText:'',footerText:'',pageNumbers:true,logoMode:'cover-only'}, research:options.contentMode==='preserve'?false:Boolean(options.research), templateId:options.template?.id||null, templateName:options.template?.name||null, knowledgeIds:(options.knowledge||[]).map(k=>k.id), approvedAssets:(options.knowledge||[]).flatMap(k=>k.assets||[]).slice(0,60) }
   });
   project=applyLayoutIntelligence(project); if(onProgress)await onProgress({stage:'layout',project});
   project.qc=await qualityControlProject(project,{parsedFile:options.parsedFile}); if(onProgress)await onProgress({stage:'qc',qc:project.qc,project});
-  const ai=client(); const autoQc=String(process.env.AUTO_QC ?? 'true').toLowerCase() !== 'false'; const maxRevisions=Math.max(0,Math.min(2,Number(process.env.QC_MAX_REVISIONS||1)));
+  const ai=client(); const autoQc=String(process.env.AUTO_QC ?? 'true').toLowerCase() !== 'false'; const maxRevisions=0; // legacy whole-project/first-six repair disabled; the page-by-page QC redesign loop below is authoritative.
   if(ai&&autoQc&&maxRevisions>0&&!project.qc.pass&&options.incremental){
     const candidates=[...new Set((project.qc.staticIssues||project.qc.issues||[]).filter(x=>Number.isInteger(x.pageIndex)).sort((a,b)=>(a.severity==='blocking'?-1:1)-(b.severity==='blocking'?-1:1)).map(x=>x.pageIndex))].slice(0,6);
     for(const pageIndex of candidates){
@@ -747,6 +835,10 @@ ${src}`:''}`});
     }
   }
   project=await materializeAutoImages(project,onProgress); project=applyLayoutIntelligence(project); project.qc=await qualityControlProject(project,{parsedFile:options.parsedFile});
+  if(ai&&autoQc&&!project.qc.pass){
+    project=await autoRedesignPagesToQc(project,options,{onProgress,maxRounds:Math.max(1,Number(process.env.QC_PAGE_REDESIGN_ROUNDS||2))});
+    project=await materializeAutoImages(project,onProgress);project=applyLayoutIntelligence(project);project.qc=await qualityControlProject(project,{parsedFile:options.parsedFile});
+  }
   if(onProgress)await onProgress({stage:'final-qc',qc:project.qc,project});
   return project;
 }
@@ -807,7 +899,7 @@ export async function generateProjectStream(options, onProgress=async()=>{}) {
         try{
           result=await generatePlannedPage(generationOptions,project,planItems[i],i,planItems.length,onProgress);
         }catch(err){
-          const canExpand=generationOptions.type==='document'&&exactTarget&&generationOptions.autoExpandPageTarget!==false&&err?.code==='EXACT_PAGE_BUDGET'&&exactTarget<500&&expansionCount<8;
+          const canExpand=generationOptions.type==='document'&&exactTarget&&Boolean(generationOptions.autoExpandPageTarget)&&err?.code==='EXACT_PAGE_BUDGET'&&exactTarget<500&&expansionCount<8;
           if(!canExpand)throw err;
           expansionCount++;
           const proposed=nextExpandedTarget(exactTarget,project.pages.length);
@@ -826,7 +918,7 @@ export async function generateProjectStream(options, onProgress=async()=>{}) {
     const effectiveTarget=Number(finalized.settings?.targetPageCount)||exactTarget||null;
     if(effectiveTarget&&finalized.pages.length!==effectiveTarget)throw new Error(`Page target integrity check failed after A4 reflow: target is ${effectiveTarget} pages but the project contains ${finalized.pages.length}. Completed pages are preserved.`);
     exactTarget=effectiveTarget;
-    finalized.settings={...(finalized.settings||{}),targetPageCount:effectiveTarget,autoExpandPageTarget:generationOptions.autoExpandPageTarget!==false};
+    finalized.settings={...(finalized.settings||{}),targetPageCount:effectiveTarget,autoExpandPageTarget:Boolean(generationOptions.autoExpandPageTarget)};
     finalized.generation={...project.generation,status:'complete',completed:finalized.pages.length,total:planItems.length,finishedAt:new Date().toISOString(),lastError:'',finalTargetPageCount:exactTarget||null};
     if(typeof generationOptions.checkpoint==='function')await generationOptions.checkpoint(finalized,{stage:'complete'});
     await onProgress({stage:'complete',project:finalized});return finalized;

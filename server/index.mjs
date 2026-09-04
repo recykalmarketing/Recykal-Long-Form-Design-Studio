@@ -10,7 +10,7 @@ import path from 'node:path';
 import { v4 as uuid } from 'uuid';
 import sharp from 'sharp';
 import { parseUploadedFile } from './fileParsers.mjs';
-import { generateProject, generateProjectStream, resumeProjectStream, generateNextPage, editWithAI, generateImage, qualityControlProject, reflowProject, generateOutline, generateContinuationOutline, appendProjectStream, buildDesignDNA, generatePageVariations, repurposeProject, analyzeImageFocalPoint, localizeProject, enforceA4DocumentPages } from './ai.mjs';
+import { generateProject, generateProjectStream, resumeProjectStream, generateNextPage, editWithAI, generateImage, qualityControlProject, reflowProject, generateOutline, generateContinuationOutline, appendProjectStream, buildDesignDNA, generatePageVariations, repurposeProject, analyzeImageFocalPoint, localizeProject, enforceA4DocumentPages, autoRedesignPagesToQc } from './ai.mjs';
 import { listProjects, getProject, saveProject, deleteProject, listKnowledge, getKnowledge, saveKnowledge, deleteKnowledge, saveVersion, listVersions, getVersion, listComments, saveComment, patchComment, deleteComment, listUsers, upsertUser, patchUser, deactivateUser, createShareLink, getShareByHash, listShareLinks, revokeShareLink, recordShareEvent, projectAnalytics, createApiKey, listApiKeys, revokeApiKey, saveWebhook, listWebhooks, deleteWebhook, getBinaryAsset, saveSourceAggregate, getSourceAggregate, storageStatus } from './store.mjs';
 import { exportProject } from './exporters.mjs';
 import { preflightExport } from './preflight.mjs';
@@ -469,8 +469,12 @@ app.post('/api/projects/:id/qc',async(req,res,next)=>{
     let parsedFile=null;
     try{parsedFile=await loadCombinedProjectSource(p)}catch{}
     p.qc=await qualityControlProject(p,{parsedFile});
+    if(!p.qc.pass && String(process.env.AUTO_QC ?? 'true').toLowerCase()!=='false'){
+      await saveVersion(p,`Automatic QC redesign from ${Math.round(p.qc.totalScore||0)}/100`);
+      p=await autoRedesignPagesToQc(p,{...p.settings,type:p.type,contentMode:p.contentMode,parsedFile},{maxRounds:Math.max(1,Number(process.env.QC_PAGE_REDESIGN_ROUNDS||2)),onProgress:async ev=>{if(ev.stage==='auto-redesign-page'||ev.stage==='auto-redesign-qc')broadcast(p.id,{type:'qc-redesign-progress',...ev,project:undefined});}});
+    }
     await saveProject(p);broadcast(p.id,{type:'qc-updated',qc:p.qc});dispatchWebhook('project.qc',{projectId:p.id,score:p.qc.totalScore,pass:p.qc.pass});
-    res.json({qc:p.qc,project:p});
+    res.json({qc:p.qc,project:p,autoRedesigned:Boolean(p.qc?.checkedAt)});
   }catch(e){next(e)}
 });
 
@@ -478,21 +482,33 @@ app.post('/api/projects/:id/export',async(req,res,next)=>{
   try{
     let p=await getProject(req.params.id);if(!p)return res.status(404).json({error:'Project not found.'});
     const review=Boolean(req.body?.review);
+    let parsedFile=null;
     const beforeCount=p.pages?.length||0;p=enforceA4DocumentPages(p);if((p.pages?.length||0)!==beforeCount)p.qc={...(p.qc||{}),stale:true};
     // Review exports are an inspection tool, so they must remain available before AI QC.
     // Final exports still require current QC + approval + rendered preflight.
     if(!review){
-      let parsedFile=null;if(p.sourceFile?.uploadId){try{parsedFile=await loadAggregate(p.sourceFile.uploadId)}catch{}}
+      if(p.sourceFile?.uploadId){try{parsedFile=await loadAggregate(p.sourceFile.uploadId)}catch{}}
       if(!p.qc || p.qc.stale){p.qc=await qualityControlProject(p,{parsedFile});await saveProject(p);}
       if(!p.qc.pass)return res.status(422).json({error:`Final export is locked because QC is ${Math.round(p.qc.totalScore||0)}/100. Download a Review PDF now, or resolve the QC issues before final delivery.`,qc:p.qc,reviewAvailable:true});
       if(!finalApprovalOk(p))return res.status(422).json({error:'Final export is locked until an Approver marks the workflow Approved.',qc:p.qc,reviewAvailable:true,approvalRequired:true});
     }else if((p.pages?.length||0)!==beforeCount){await saveProject(p);}
     const format=String(req.body?.format||'pdf').toLowerCase();
     const profile=format==='pdf'&&String(req.body?.profile||'digital').toLowerCase()==='print'?'print':'digital';
-    const file=await exportProject(p,format,{review,profile});
-    const preflight=await preflightExport(file,format,p,{profile});
+    let file=await exportProject(p,format,{review,profile});
+    let preflight=await preflightExport(file,format,p,{profile});
+    // Rendered output is part of the quality gate. If the actual PDF/PPTX/PNG is below 90,
+    // feed those visible page defects back into the same page-by-page redesign loop and retry once.
+    if(!review&&!preflight.pass&&preflight.visual&&(Number(preflight.visual.score)<90||(preflight.visual.issues||[]).length)){
+      const visualIssues=(preflight.visual.issues||[]).map(x=>({category:x.category||'visualCraft',severity:x.severity||'warning',message:`Rendered export: ${x.message}`,pageIndex:Math.max(0,Number(x.page||1)-1)}));
+      p.qc={...(p.qc||{}),totalScore:Math.min(Number(p.qc?.totalScore||100),Number(preflight.visual.score||0)||100),pass:false,staticIssues:[...(p.qc?.staticIssues||p.qc?.issues||[]),...visualIssues],issues:[...(p.qc?.issues||[]),...visualIssues],blockingDefects:[...new Set([...(p.qc?.blockingDefects||[]),...(preflight.visual.blockingDefects||[])])]};
+      await saveVersion(p,`Rendered QC auto-redesign from ${Math.round(preflight.visual.score||0)}/100`);
+      p=await autoRedesignPagesToQc(p,{...p.settings,type:p.type,contentMode:p.contentMode,parsedFile},{maxRounds:1});
+      await saveProject(p);
+      file=await exportProject(p,format,{review:false,profile});
+      preflight=await preflightExport(file,format,p,{profile});
+    }
     p.exportPreflight={...preflight,format,review,profile}; await saveProject(p);
-    if(!review&&!preflight.pass)return res.status(500).json({error:'Export preflight found a blocking production defect. Use Review export if needed and correct the issue before final delivery.',preflight,qc:p.qc,reviewAvailable:true});
+    if(!review&&!preflight.pass)return res.status(500).json({error:'Rendered export still does not meet the 90/100 production gate after automatic page-by-page redesign. Review the remaining flagged pages before final delivery.',preflight,qc:p.qc,reviewAvailable:true});
     dispatchWebhook('project.exported',{projectId:p.id,format,review,profile,filename:path.basename(file),preflightPass:preflight.pass});res.json({url:`/exports/${encodeURIComponent(path.basename(file))}`,filename:path.basename(file),qc:p.qc,review,profile,preflight});
   }catch(e){next(e)}
 });

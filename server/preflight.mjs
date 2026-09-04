@@ -91,6 +91,6 @@ export async function preflightExport(file,format,project,{profile='digital'}={}
   let production=null;if(format==='pdf'&&pdfProfile==='print'&&structural.pass)production=await printProductionPreflight(file,total);
   const structuralPass=structural.pass&&(!production||production.pass);
   const visual=structuralPass?await visualPreflight(file,format,project,total,{profile:pdfProfile}):null;
-  const visualBlocking=visual?.blockingDefects||[];const errors=[...structural.errors,...(production?.errors||[]),...visualBlocking];const warnings=[...structural.warnings,...(production?.warnings||[]),...((visual?.issues||[]).filter(x=>x.severity==='warning').map(x=>`Page ${x.page}: ${x.message}`))];
+  const visualBlocking=visual?.blockingDefects||[];const visualScore=Number(visual?.score);const visualGate=Number.isFinite(visualScore)&&visualScore<90?[`Rendered visual QC is ${Math.round(visualScore)}/100; final delivery requires 90/100 or higher.`]:[];const errors=[...structural.errors,...(production?.errors||[]),...visualBlocking,...visualGate];const warnings=[...structural.warnings,...(production?.warnings||[]),...((visual?.issues||[]).filter(x=>x.severity==='warning').map(x=>`Page ${x.page}: ${x.message}`))];
   return {pass:errors.length===0,profile:pdfProfile,errors,warnings,details:{...structural.details,production:production?.details||null},production,visual,checkedAt:new Date().toISOString(),filename:path.basename(file)};
 }

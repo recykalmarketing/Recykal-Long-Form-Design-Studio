@@ -36,7 +36,7 @@ const printFlight=await preflightExport(print,'pdf',project,{profile:'print'});
 if(!digitalFlight.pass)throw new Error(`Digital PDF preflight failed: ${JSON.stringify(digitalFlight.errors)}`);
 if(!printFlight.pass)throw new Error(`Print PDF preflight failed: ${JSON.stringify(printFlight.errors)}`);
 if(BRAND.fontFamily!=='Poppins')throw new Error('Brand config failed');
-if(DESIGN_KNOWLEDGE.deliveryThreshold!==85)throw new Error('Design knowledge QC threshold failed');
+if(DESIGN_KNOWLEDGE.deliveryThreshold!==90)throw new Error('Design knowledge QC threshold failed');
 if(!DESIGN_KNOWLEDGE_VERSION.startsWith('1.0'))throw new Error('Design knowledge version failed');
 console.log('Self-test passed',{
   png:path.basename(png),digital:path.basename(digital),print:path.basename(print),

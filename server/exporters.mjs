@@ -61,7 +61,7 @@ async function logoPng() {
 
 export async function exportPdf(project, {review=false,profile='digital'}={}) {
   await fs.mkdir(EXPORT_DIR,{recursive:true});
-  const reviewTag=review?`-QC-REVIEW-${Math.round(project.qc?.totalScore||0)}`:'';
+  const reviewTag=review?'-REVIEW':'';
   const pdfProfile=profile==='print'?'print':'digital';
   const profileTag=pdfProfile==='print'?'-Print':'-Digital';
   const file = path.join(EXPORT_DIR, `${safeFilename(project.title)}-${project.id.slice(0,8)}${profileTag}${reviewTag}.pdf`);
@@ -127,7 +127,7 @@ export async function exportPdf(project, {review=false,profile='digital'}={}) {
     doc.restore();};
   const drawPageSurface=(surface={},W=TRIM_W,H=TRIM_H)=>{const mode=surface?.mode||'plain';if(mode==='plain')return;doc.save();const pale=(hex,opacity=.08)=>{doc.fillColor(hex).fillOpacity(opacity)};if(mode==='top-band'){pale(T.primary,.07);doc.rect(0,0,W,H*.18).fill();}else if(mode==='side-panel'){pale(T.secondary,.08);doc.roundedRect(W*.72,H*.12,W*.30,H*.70,22).fill();}else if(mode==='data-band'){pale(T.primary,.06);doc.rect(0,H*.62,W,H*.24).fill();}else if(mode==='quote-panel'){pale(T.secondary,.07);doc.rect(W*.07,H*.28,W*.86,H*.38).fill();doc.fillOpacity(1).fillColor(T.secondary).rect(W*.07,H*.28,5,H*.38).fill();}else if(mode==='split-tint'){pale(T.primary,.055);doc.rect(W*.56,0,W*.44,H).fill();}else if(mode==='chapter-field'){doc.lineWidth(26).strokeOpacity(.08).strokeColor(T.primary).circle(W*.83,H*.34,W*.27).stroke();doc.lineWidth(15).strokeOpacity(.08).strokeColor(T.secondary).circle(W*.83,H*.34,W*.15).stroke();}else if(mode==='dark'){doc.fillOpacity(1).fillColor(T.dark).rect(0,0,W,H).fill();}else if(mode==='soft-grid'){doc.strokeOpacity(.07).strokeColor(T.primary).lineWidth(.4);for(let x=0;x<W;x+=38)doc.moveTo(x,0).lineTo(x,H).stroke();for(let y=0;y<H;y+=38)doc.moveTo(0,y).lineTo(W,y).stroke();}doc.restore();};
   const footer=()=>{if(!pageOpen)return;const W=TRIM_W,H=TRIM_H;if(master.footerText||master.pageNumbers!==false){doc.strokeColor('#E6EBF1').lineWidth(.6).moveTo(M,H-footerH-8).lineTo(W-M,H-footerH-8).stroke();if(master.footerText)doc.fillColor('#7A8798').font(fonts.regular).fontSize(7.2).text(master.footerText,M,H-footerH,{width:W-2*M-45});if(master.pageNumbers!==false)doc.font(fonts.bold).fillColor(T.muted).text(String(physicalPage).padStart(2,'0'),W-M-35,H-footerH,{width:35,align:'right'});}};
-  const addPhysicalPage=(layout='editorial',continued=false,{dark=false,surface=null}={})=>{if(pageOpen)footer();doc.addPage({size:mediaSize,margin:0});pageOpen=true;physicalPage++;const W=TRIM_W,H=TRIM_H;doc.rect(0,0,W,H).fill(dark?T.dark:T.background);if(surface&&!dark)drawPageSurface(surface,W,H);let top=dark?70:54;if(!dark){if(physicalPage===1&&master.logoMode!=='none'&&layout!=='cover'){doc.image(logo,M,24,{fit:[110,30]});top=84;}else if(master.headerText){doc.fillColor(T.muted).font(fonts.regular).fontSize(7.4).text(master.headerText,M,29,{width:W-2*M-170});doc.strokeColor('#E6EBF1').lineWidth(.6).moveTo(M,54).lineTo(W-M,54).stroke();top=72;}}if(review){doc.roundedRect(W-M-142,24,142,20,5).fill('#FFF3F2');doc.fillColor('#B42318').font(fonts.bold).fontSize(7).text(`DRAFT • QC REVIEW • ${Math.round(project.qc?.totalScore||0)}/100`,W-M-136,30,{width:130,align:'center'});top=Math.max(top,64);}return top;};
+  const addPhysicalPage=(layout='editorial',continued=false,{dark=false,surface=null}={})=>{if(pageOpen)footer();doc.addPage({size:mediaSize,margin:0});pageOpen=true;physicalPage++;const W=TRIM_W,H=TRIM_H;doc.rect(0,0,W,H).fill(dark?T.dark:T.background);if(surface&&!dark)drawPageSurface(surface,W,H);let top=dark?70:54;if(!dark){if(physicalPage===1&&master.logoMode!=='none'&&layout!=='cover'){doc.image(logo,M,24,{fit:[110,30]});top=84;}else if(master.headerText){doc.fillColor(T.muted).font(fonts.regular).fontSize(7.4).text(master.headerText,M,29,{width:W-2*M-170});doc.strokeColor('#E6EBF1').lineWidth(.6).moveTo(M,54).lineTo(W-M,54).stroke();top=72;}}return top;};
   const splitToFit=(text,width,height,font=fonts.regular,size=9.4,lineGap=3)=>{const words=String(text||'').split(/\s+/).filter(Boolean);if(!words.length)return['',''];doc.font(font).fontSize(size);let lo=1,hi=words.length,best=0;while(lo<=hi){const mid=Math.floor((lo+hi)/2),part=words.slice(0,mid).join(' '),h=doc.heightOfString(part,{width,lineGap});if(h<=height){best=mid;lo=mid+1}else hi=mid-1;}if(best===0)best=1;return[words.slice(0,best).join(' '),words.slice(best).join(' ')];};
   const titleBlocks=page=>({kicker:page.blocks.find(b=>b.type==='kicker'),heading:page.blocks.find(b=>b.type==='heading'),sub:page.blocks.find(b=>b.type==='subheading')});
   const drawHeading=(page,y,{width=TRIM_W-2*M,dark=false,size=26}={})=>{const {kicker,heading,sub}=titleBlocks(page);if(kicker){const ks=textSize(kicker,8.5),kg=textLineGap(kicker,ks,1.25);doc.fillColor(kicker.style?.textColor||(dark?'#BFF5E5':T.secondary)).font(textFont(kicker,fonts.bold)).fontSize(ks).text(kicker.text||'',M,y,{width,characterSpacing:.8,lineGap:kg,align:textAlign(kicker)});y=doc.y+8;}if(heading){let defaultSize=size;if(!heading.style?.fontSize&&!isPresentation){const n=String(heading.text||page.title||'').length;if(n>90)defaultSize=Math.min(defaultSize,20);else if(n>58)defaultSize=Math.min(defaultSize,23);}const hs=textSize(heading,defaultSize),hg=textLineGap(heading,hs,1.18);doc.fillColor(heading.style?.textColor||(dark?'#FFFFFF':T.text)).font(textFont(heading,fonts.bold)).fontSize(hs).text(heading.text||page.title,M,y,{width,lineGap:hg,align:textAlign(heading)});y=doc.y+10;}if(sub){const ss=textSize(sub,12),sg=textLineGap(sub,ss,1.42);doc.fillColor(sub.style?.textColor||(dark?'#DCE8F4':T.muted)).font(textFont(sub,fonts.regular)).fontSize(ss).text(sub.text||'',M,y,{width:Math.min(width,430),lineGap:sg,align:textAlign(sub)});y=doc.y+12;}return y;};
@@ -195,7 +195,7 @@ function tableColumnWeightsForExport(block={}){const headers=block.tableHeaders|
 
 export async function exportPptx(project, {review=false}={}) {
   await fs.mkdir(EXPORT_DIR,{recursive:true});
-  const reviewTag=review?`-QC-REVIEW-${Math.round(project.qc?.totalScore||0)}`:'';
+  const reviewTag=review?'-REVIEW':'';
   const file=path.join(EXPORT_DIR,`${safeFilename(project.title)}-${project.id.slice(0,8)}${reviewTag}.pptx`);
   const pptx=new PptxGenJS();
   const pptFont=officeFontFace(project);
@@ -217,7 +217,6 @@ export async function exportPptx(project, {review=false}={}) {
     const page=project.pages[i]; const slide=pptx.addSlide();
     slide.background={color:T.background.replace('#','')};addSlideSurface(slide,page);
     if(i===0&&master.logoMode!=='none')slide.addImage({path:logo,x:0.45,y:0.30,w:1.55,h:0.34,transparency:0});else if(master.headerText)slide.addText(master.headerText,{x:0.48,y:0.30,w:6.8,h:0.22,fontFace:pptFont,fontSize:7,color:'667085',margin:0});
-    if(review){slide.addText(`DRAFT • QC REVIEW • ${Math.round(project.qc?.totalScore||0)}/100`,{x:10.65,y:0.25,w:2.2,h:0.28,fontFace:pptFont,fontSize:7,bold:true,color:'B42318',fill:{color:'FFF3F2'},margin:0.05,align:'center'});}
     slide.addText(page.layout.toUpperCase(),{x:0.5,y:0.83,w:3,h:0.18,fontFace:pptFont,fontSize:7,bold:true,color:T.primary.replace('#',''),charSpacing:1.5});
     let y=1.15;
     for (const b of page.blocks) {
@@ -278,7 +277,7 @@ export async function exportGraphicPng(project, {review=false}={}) {
   const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">
     <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${T.background}"/><stop offset="1" stop-color="${T.surface}"/></linearGradient><clipPath id="imgclip"><rect x="620" y="170" width="390" height="430" rx="36"/></clipPath></defs>
     <rect width="100%" height="100%" fill="url(#g)"/>
-    ${review?`<rect x="700" y="32" width="300" height="42" rx="12" fill="#FFF3F2"/><text x="850" y="60" text-anchor="middle" font-family="Poppins,Arial,sans-serif" font-size="16" font-weight="700" fill="#B42318">DRAFT • QC REVIEW • ${Math.round(project.qc?.totalScore||0)}/100</text>`:''}
+    
     <circle cx="930" cy="200" r="230" fill="${T.primary}" opacity="0.08"/><circle cx="870" cy="280" r="155" fill="${T.secondary}" opacity="0.12"/>
     ${imageData?`<image href="${imageData}" x="620" y="170" width="390" height="430" preserveAspectRatio="${(imageBlock?.focalX??50)<34?'xMin':(imageBlock?.focalX??50)>66?'xMax':'xMid'}${(imageBlock?.focalY??50)<34?'YMin':(imageBlock?.focalY??50)>66?'YMax':'YMid'} ${(imageBlock?.imageFit||'cover')==='contain'?'meet':'slice'}" clip-path="url(#imgclip)"/>`:''}
     <image href="${logoData}" x="72" y="66" width="240" height="60" preserveAspectRatio="xMinYMid meet"/>
@@ -289,7 +288,7 @@ export async function exportGraphicPng(project, {review=false}={}) {
     ${bullets.slice(0,3).map((b,i)=>`<circle cx="620" cy="${930+i*72}" r="11" fill="${T.secondary}"/><text x="650" y="${940+i*72}" font-family="Poppins,Arial,sans-serif" font-size="24" fill="${T.text}">${esc(wrapSvgText(b,27)[0]||'')}</text>`).join('')}
     <rect x="0" y="1250" width="1080" height="100" fill="${T.dark}"/><text x="72" y="1312" font-family="Poppins,Arial,sans-serif" font-size="24" font-weight="500" fill="#ffffff">Make circularity work.</text>
   </svg>`;
-  const reviewTag=review?`-QC-REVIEW-${Math.round(project.qc?.totalScore||0)}`:'';
+  const reviewTag=review?'-REVIEW':'';
   const file=path.join(EXPORT_DIR,`${safeFilename(project.title)}-${project.id.slice(0,8)}${reviewTag}.png`);
   await sharp(Buffer.from(svg)).png().toFile(file);
   return file;
