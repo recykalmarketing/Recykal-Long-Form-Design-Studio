@@ -124,18 +124,68 @@ function inferLayout(page={}, index=0, total=1) {
   if(textWeight(page)>1300 || blocks.filter(b=>b.type==='paragraph').length>=3) return 'two-column';
   return page.layout && page.layout!=='editorial' ? page.layout : 'editorial';
 }
+function pageCapacity(layout='editorial'){
+  return ({cover:620,editorial:760,'two-column':1380,stat:760,quote:700,timeline:760,comparison:760,process:760,table:760,chart:760,'image-led':700,closing:620})[layout]||760;
+}
+function blockUnits(block={},layout='editorial'){
+  const two=layout==='two-column';
+  const text=String(block.text||'');
+  if(block.type==='kicker')return 28;
+  if(block.type==='heading')return Math.max(64,Math.ceil(text.length/(two?46:58))*34);
+  if(block.type==='subheading')return Math.max(42,Math.ceil(text.length/(two?60:76))*24);
+  if(block.type==='paragraph')return 18+Math.ceil(text.length/(two?48:82))*18;
+  if(block.type==='quote')return 70+Math.ceil(text.length/58)*22;
+  if(block.type==='bullets')return 18+(block.items||[]).reduce((n,x)=>n+Math.max(28,Math.ceil(String(x).length/(two?38:68))*17+8),0);
+  if(block.type==='stat')return 118;
+  if(block.type==='image')return layout==='image-led'?390:260;
+  if(block.type==='chart')return 280;
+  if(block.type==='table')return 38+Math.max(1,(block.tableRows||[]).length)*31;
+  return 40;
+}
+function splitWordsToLimit(text='',maxChars=1000){
+  const words=String(text).trim().split(/\s+/).filter(Boolean);if(!words.length)return[];const out=[];let cur='';for(const w of words){const next=(cur+' '+w).trim();if(cur&&next.length>maxChars){out.push(cur);cur=w}else cur=next}if(cur)out.push(cur);return out;
+}
+function continuationHeading(page){return normalizeBlock({type:'heading',text:`${String(page.title||'Section').replace(/\s*[—-]\s*continued$/i,'')} — continued`});}
+function splitPageToA4(page){
+  const layout=page.layout||'editorial';
+  if(['cover','closing'].includes(layout))return [page];
+  const cap=pageCapacity(layout),firstStructural=[],body=[];
+  for(const b of page.blocks||[]){if(['kicker','heading','subheading'].includes(b.type)&&body.length===0)firstStructural.push(b);else body.push(b)}
+  const pages=[];let current={...page,blocks:[...firstStructural]};let used=current.blocks.reduce((n,b)=>n+blockUnits(b,layout),0);let hasBody=false;
+  const flush=()=>{if(current.blocks.length){pages.push(current);current={...page,id:uuid(),title:`${String(page.title||'Section').replace(/\s*[—-]\s*continued$/i,'')} — continued`,blocks:[continuationHeading(page)],speakerNotes:''};used=blockUnits(current.blocks[0],layout);hasBody=false;}};
+  const addBlock=(b)=>{current.blocks.push(b);used+=blockUnits(b,layout);hasBody=true;};
+  for(const original of body){
+    if(original.type==='table'){
+      const rows=[...(original.tableRows||[])];let pos=0;while(pos<rows.length){const room=Math.max(2,Math.floor((cap-used-45)/31));if(room<2&&hasBody){flush();continue}const count=Math.max(2,room);const chunk=rows.slice(pos,pos+count);const b={...original,id:pos===0?original.id:uuid(),tableRows:chunk,caption:pos===0?original.caption:`${original.caption||page.title} — continued`};if(used+blockUnits(b,layout)>cap&&hasBody){flush();continue}addBlock(b);pos+=chunk.length;if(pos<rows.length)flush()}continue;
+    }
+    if(original.type==='bullets'&&(original.items||[]).length){
+      let items=[...(original.items||[])];while(items.length){const fit=[];let probe={...original,items:[]};while(items.length){const candidate=[...fit,items[0]];probe={...original,items:candidate};if(fit.length&&used+blockUnits(probe,layout)>cap)break;fit.push(items.shift());if(used+blockUnits(probe,layout)>=cap)break}if(!fit.length&&hasBody){flush();continue}addBlock({...original,id:fit.length===(original.items||[]).length?original.id:uuid(),items:fit});if(items.length)flush()}continue;
+    }
+    const cost=blockUnits(original,layout);
+    if(original.type==='paragraph'&&cost>cap-used){
+      const maxChars=layout==='two-column'?1700:1050;const chunks=splitWordsToLimit(original.text,maxChars);for(let ci=0;ci<chunks.length;ci++){const b={...original,id:ci===0?original.id:uuid(),text:chunks[ci]};if(used+blockUnits(b,layout)>cap&&hasBody)flush();addBlock(b);if(ci<chunks.length-1)flush()}continue;
+    }
+    if(used+cost>cap&&hasBody)flush();
+    addBlock(original);
+  }
+  if(current.blocks.length>1||!pages.length)pages.push(current);
+  return pages.map((p,i)=>({...p,a4:{format:'A4',orientation:'portrait',fixed:true,continuation:i>0||/continued/i.test(p.title)}}));
+}
+export function enforceA4DocumentPages(project){
+  if(project.type!=='document')return project;
+  const out=[];for(const p of project.pages||[])out.push(...splitPageToA4(p));project.pages=out;project.settings={...(project.settings||{}),pageFormat:'A4',pageOrientation:'portrait',fixedPageSize:true};return project;
+}
 function applyLayoutIntelligence(project) {
   const allowed=new Set(['cover','editorial','two-column','stat','quote','timeline','comparison','process','table','chart','image-led','closing']);
   let prev=''; let run=0;
   project.pages=(project.pages||[]).map((p,i)=>{
     let layout=allowed.has(p.layout)?p.layout:inferLayout(p,i,project.pages.length);
-    // Semantic evidence beats a weak generic layout choice.
     if(['editorial','two-column'].includes(layout)) layout=inferLayout({...p,layout},i,project.pages.length);
     if(layout===prev) run++; else {prev=layout;run=1;}
     if(project.type==='document' && run>=3 && ['editorial','two-column'].includes(layout)) { layout=layout==='editorial'?'two-column':'editorial'; prev=layout;run=1; }
     return {...p,layout};
   });
-  return project;
+  return enforceA4DocumentPages(project);
 }
 
 function tokenSet(text=''){return new Set(String(text).toLowerCase().replace(/[^a-z0-9 ]/g,' ').split(/\s+/).filter(x=>x.length>3))}
@@ -235,7 +285,8 @@ STRUCTURE RULES:
 - Apply accessibility, data-integrity, image-quality and production gates from the Design Intelligence Knowledge Base.
 - For file-based design, validate completeness against source and flag low extraction confidence rather than guessing.
 - PAGE FILL / DENSITY: Avoid accidental dead space. For ordinary narrative/evidence pages, target roughly 68–88% meaningful visual occupancy. Sparse pages are allowed only when they are intentional opening, divider, quote, pause or closing pages. If content is dense, recompose into 2 columns, tables, stat grids or evidence panels instead of shrinking type.
-- COLUMNS: On A4 documents, use the 6-column editorial grid to create 1-column, 2-column or 3-module compositions according to content. Use 2 text columns for dense body narrative; use 3 columns only for short cards/facts, never for long paragraphs.
+- A4 IS A HARD PHYSICAL CONSTRAINT: every document page must remain exactly A4 portrait (210 × 297 mm). Never increase page height to fit content. If content does not fit, create a continuation page.
+- COLUMNS: On A4 documents, use the 6-column editorial grid to create 1-column, 2-column or 3-module compositions according to content. Use 2 text columns for dense body narrative; use 3 columns only for short cards/facts, never for long paragraphs. A two-column decision changes composition only, never physical page dimensions.
 - TABLES: Preserve every source cell. Use clear headers, row grouping, alignment and adequate row height. Never truncate or ellipsize critical table values. If a table is too large, continue it on a new page and repeat the header.
 - INFOGRAPHICS: Whenever content expresses sequence, chronology, comparison, system architecture or grouped facts, prefer a process/timeline/comparison/stat layout rather than plain paragraphs. Use native vector lines, nodes, arrows and relevant icons.
 - ICONS / VECTORS: Use relevant vector iconography for short semantic items (policy, people, finance, circularity, location, technology, target, governance, logistics, data). Do not use icons as decoration; every icon must reinforce meaning.
@@ -379,7 +430,7 @@ async function generatePlannedPage(options,project,item,index,total,onProgress){
     const source=relevantSourceContext(options,item,index,total,sourceMax);
     const knowledge=relevantKnowledgeContext(options,item,attempt===1?12000:7000);
     const conservative=attempt>1?`\nRECOVERY PASS ${attempt}: Keep the page response compact. Prefer fewer, complete blocks over long prose. Never truncate a string, table cell, list item or JSON field. Preserve all critical source facts assigned to this page.`:'';
-    const input=`Generate exactly ONE ${options.type==='presentation'?'slide':options.type==='graphic'?'graphic canvas':'designed document page/section'} as item ${index+1} of ${total}. This request is deliberately page-scoped: never return the full project.\n\nPLANNED PAGE:\nTitle: ${item?.title||`Page ${index+1}`}\nRole: ${item?.role||'narrative'}\nRequired layout: ${item?.layout||'editorial'}\nVisual treatment: ${item?.visualTreatment||'Use the design intelligence rules'}\nPurpose: ${item?.purpose||''}\n\nPROJECT TITLE: ${project.title}\nPROJECT SUMMARY/STRATEGY: ${project.summary}\nRECENT COMPLETED PAGES (avoid repetition and maintain continuity):\n${JSON.stringify(prior)}\n\n${globalRules}\n\n${source?`AUTHORITATIVE SOURCE EXCERPTS FOR THIS PAGE:\n${source}\n`:''}${knowledge?`\nRELEVANT RECYKAL KNOWLEDGE CONTEXT:\n${knowledge}\n`:''}${conservative}\n\nPAGE-SCOPED RULES:\n- Return one page and its sources only.\n- Follow the planned role/layout unless source fidelity makes a small safe adjustment necessary.\n- Do not duplicate prior-page content.\n- If this page contains a source table, preserve its cells and units; use a table block.\n- If content is sequential/chronological/comparative, use process/timeline/comparison structure rather than plain paragraphs.\n- For image needs, create image blocks with specific imagePrompt and altText, not fake URLs.\n- Never invent metrics, citations, quotations, people, dates or product claims.\n- Keep body copy readable; use columns or additional pages rather than tiny type.\n- Do not put the Recykal logo into page content; the master renderer handles the logo on the cover only.`;
+    const input=`Generate exactly ONE ${options.type==='presentation'?'slide':options.type==='graphic'?'graphic canvas':'designed document page/section'} as item ${index+1} of ${total}. This request is deliberately page-scoped: never return the full project.\n\nPLANNED PAGE:\nTitle: ${item?.title||`Page ${index+1}`}\nRole: ${item?.role||'narrative'}\nRequired layout: ${item?.layout||'editorial'}\nVisual treatment: ${item?.visualTreatment||'Use the design intelligence rules'}\nPurpose: ${item?.purpose||''}\n\nPROJECT TITLE: ${project.title}\nPROJECT SUMMARY/STRATEGY: ${project.summary}\nRECENT COMPLETED PAGES (avoid repetition and maintain continuity):\n${JSON.stringify(prior)}\n\n${globalRules}\n\n${source?`AUTHORITATIVE SOURCE EXCERPTS FOR THIS PAGE:\n${source}\n`:''}${knowledge?`\nRELEVANT RECYKAL KNOWLEDGE CONTEXT:\n${knowledge}\n`:''}${conservative}\n\nPAGE-SCOPED RULES:\n- Return one page and its sources only.\n- Follow the planned role/layout unless source fidelity makes a small safe adjustment necessary.\n- Do not duplicate prior-page content.\n- If this page contains a source table, preserve its cells and units; use a table block.\n- If content is sequential/chronological/comparative, use process/timeline/comparison structure rather than plain paragraphs.\n- For image needs, create image blocks with specific imagePrompt and altText, not fake URLs.\n- Never invent metrics, citations, quotations, people, dates or product claims.\n- Keep body copy readable; use columns or additional pages rather than tiny type. A document page must fit an A4 portrait sheet with no vertical growth or overflow; continue onto another page when needed.\n- Do not put the Recykal logo into page content; the master renderer handles the logo on the cover only.`;
     try{
       const raw=await structuredResponse({name:'recykal_incremental_page',schema:generatedPageResultSchema,research:allowResearch,input,maxOutputTokens:attempt===1?12000:8000,attempts:1});
       if(!raw?.page)throw new Error('Studio AI returned no page.');
@@ -417,6 +468,30 @@ async function finalizeGeneratedProject(data, options, {onProgress=null}={}) {
   project=applyLayoutIntelligence(project); if(onProgress)await onProgress({stage:'layout',project});
   project.qc=await qualityControlProject(project,{parsedFile:options.parsedFile}); if(onProgress)await onProgress({stage:'qc',qc:project.qc,project});
   const ai=client(); const autoQc=String(process.env.AUTO_QC ?? 'true').toLowerCase() !== 'false'; const maxRevisions=Math.max(0,Math.min(2,Number(process.env.QC_MAX_REVISIONS||1)));
+  if(ai&&autoQc&&maxRevisions>0&&!project.qc.pass&&options.incremental){
+    const candidates=[...new Set((project.qc.staticIssues||project.qc.issues||[]).filter(x=>Number.isInteger(x.pageIndex)).sort((a,b)=>(a.severity==='blocking'?-1:1)-(b.severity==='blocking'?-1:1)).map(x=>x.pageIndex))].slice(0,6);
+    for(const pageIndex of candidates){
+      const original=project.pages[pageIndex];if(!original)continue;
+      const pageIssues=(project.qc.staticIssues||project.qc.issues||[]).filter(x=>x.pageIndex===pageIndex).map(x=>`${x.severity}: ${x.message}`);
+      if(!pageIssues.length)continue;
+      if(onProgress)await onProgress({stage:'revision',attempt:1,pageIndex,message:`Improving page ${pageIndex+1} against A4/layout QC…`});
+      try{
+        const src=relevantSourceContext(options,{title:original.title,purpose:'QC repair'},pageIndex,project.pages.length,16000);
+        const revised=await structuredResponse({name:'recykal_page_qc_repair',schema:pageSchema,research:false,maxOutputTokens:9000,attempts:2,input:`Repair exactly ONE existing ${project.type==='presentation'?'slide':'A4 document page'} to resolve the listed QC defects. Preserve every factual claim, number, date, name, table cell, chart datum, citation and source. Do not add unsupported facts. Keep the Recykal design system. For documents, physical size is exactly A4 portrait (210 x 297 mm); never increase page height. If content is too dense, simplify phrasing without dropping facts or use a denser semantic layout; the deterministic paginator can create a continuation page if still necessary.
+
+QC DEFECTS:
+${pageIssues.join('\n')}
+
+CURRENT PAGE:
+${JSON.stringify(original)}${src?`
+
+AUTHORITATIVE SOURCE EXCERPT:
+${src}`:''}`});
+        if(revised){const repaired=normalizePage({...revised,id:original.id,title:revised.title||original.title});const pos=project.pages.findIndex(p=>p.id===original.id);if(pos>=0)project.pages[pos]=repaired;project=applyLayoutIntelligence(project);if(onProgress)await onProgress({stage:'revision',attempt:1,pageIndex,project,applied:true});}
+      }catch{}
+    }
+    project.qc=await qualityControlProject(project,{parsedFile:options.parsedFile});if(onProgress)await onProgress({stage:'qc',qc:project.qc,project});
+  }
   if(ai&&autoQc&&maxRevisions>0&&!project.qc.pass&&!options.incremental&&project.pages.length<=8){
     for(let attempt=0;attempt<maxRevisions&&!project.qc.pass;attempt++){
       if(onProgress)await onProgress({stage:'revision',attempt:attempt+1,qc:project.qc});

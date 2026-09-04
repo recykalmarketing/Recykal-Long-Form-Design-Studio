@@ -8,6 +8,8 @@ function textOf(project){
 }
 
 function issue(category, severity, message, pageIndex=null){ return {category,severity,message,pageIndex}; }
+function a4Units(block={},layout='editorial'){const two=layout==='two-column',text=String(block.text||'');if(block.type==='kicker')return 28;if(block.type==='heading')return Math.max(64,Math.ceil(text.length/(two?46:58))*34);if(block.type==='subheading')return Math.max(42,Math.ceil(text.length/(two?60:76))*24);if(block.type==='paragraph')return 18+Math.ceil(text.length/(two?48:82))*18;if(block.type==='bullets')return 18+(block.items||[]).reduce((n,x)=>n+Math.max(28,Math.ceil(String(x).length/(two?38:68))*17+8),0);if(block.type==='table')return 38+Math.max(1,(block.tableRows||[]).length)*31;if(block.type==='image')return layout==='image-led'?390:260;if(block.type==='chart')return 280;if(block.type==='stat')return 118;if(block.type==='quote')return 70+Math.ceil(text.length/58)*22;return 40}
+function a4Capacity(layout='editorial'){return ({cover:620,editorial:760,'two-column':1380,stat:760,quote:700,timeline:760,comparison:760,process:760,table:760,chart:760,'image-led':700,closing:620})[layout]||760}
 
 export function staticQualityCheck(project){
   const issues=[]; const pages=project.pages||[];
@@ -15,6 +17,7 @@ export function staticQualityCheck(project){
 
   pages.forEach((p,idx)=>{
     const blocks=p.blocks||[];
+    if(project.type==='document'&&!['cover','closing'].includes(p.layout)){const units=blocks.reduce((n,b)=>n+a4Units(b,p.layout),0),cap=a4Capacity(p.layout);if(units>cap*1.06)issues.push(issue('exportQuality','blocking','This page exceeds the fixed A4 portrait content area. Split/reflow it onto a continuation page; never increase physical page height.',idx));else if(units>cap*.94)issues.push(issue('legibility','warning','This A4 page is close to its safe content limit; verify line wrapping, table row height and footer clearance.',idx));}
     const headings=blocks.filter(b=>b.type==='heading');
     const primaryLike=blocks.filter(b=>['heading','stat','quote'].includes(b.type));
     if(!headings.length) issues.push(issue('hierarchy','warning','Page/section has no clear H1-level heading.',idx));

@@ -10,8 +10,8 @@ import path from 'node:path';
 import { v4 as uuid } from 'uuid';
 import sharp from 'sharp';
 import { parseUploadedFile } from './fileParsers.mjs';
-import { generateProject, generateProjectStream, generateNextPage, editWithAI, generateImage, qualityControlProject, reflowProject, generateOutline, generatePageVariations, repurposeProject, analyzeImageFocalPoint, localizeProject } from './ai.mjs';
-import { listProjects, getProject, saveProject, deleteProject, listKnowledge, getKnowledge, saveKnowledge, deleteKnowledge, saveVersion, listVersions, getVersion, listComments, saveComment, patchComment, deleteComment, listUsers, upsertUser, patchUser, deactivateUser, createShareLink, getShareByHash, listShareLinks, revokeShareLink, recordShareEvent, projectAnalytics, createApiKey, listApiKeys, revokeApiKey, saveWebhook, listWebhooks, deleteWebhook, getBinaryAsset, saveSourceAggregate, getSourceAggregate } from './store.mjs';
+import { generateProject, generateProjectStream, generateNextPage, editWithAI, generateImage, qualityControlProject, reflowProject, generateOutline, generatePageVariations, repurposeProject, analyzeImageFocalPoint, localizeProject, enforceA4DocumentPages } from './ai.mjs';
+import { listProjects, getProject, saveProject, deleteProject, listKnowledge, getKnowledge, saveKnowledge, deleteKnowledge, saveVersion, listVersions, getVersion, listComments, saveComment, patchComment, deleteComment, listUsers, upsertUser, patchUser, deactivateUser, createShareLink, getShareByHash, listShareLinks, revokeShareLink, recordShareEvent, projectAnalytics, createApiKey, listApiKeys, revokeApiKey, saveWebhook, listWebhooks, deleteWebhook, getBinaryAsset, saveSourceAggregate, getSourceAggregate, storageStatus } from './store.mjs';
 import { exportProject } from './exporters.mjs';
 import { preflightExport } from './preflight.mjs';
 import { BRAND } from './brand.mjs';
@@ -58,7 +58,9 @@ app.use('/api',async(req,res,next)=>{
 });
 function requireScope(scope){return (req,res,next)=>{if(req.identity?.kind!=='api-key')return next();if((req.identity.scopes||[]).includes('*')||(req.identity.scopes||[]).includes(scope))return next();return res.status(403).json({error:`API key requires ${scope} scope.`})}}
 const approvalRequired=String(process.env.REQUIRE_APPROVER_FOR_FINAL_EXPORT||'false').toLowerCase()==='true';
+const durableStorageRequired=String(process.env.REQUIRE_DURABLE_STORAGE||'true').toLowerCase()!=='false';
 function finalApprovalOk(project){return !approvalRequired || project?.workflow?.status==='Approved';}
+async function ensureDurableGenerationStorage(){const st=await storageStatus();if(durableStorageRequired&&!st.durable){const e=new Error('Persistent project storage is not connected. Configure Render Postgres DATABASE_URL before starting paid AI generation so completed work cannot disappear after a restart or deploy.');e.status=503;throw e;}return st;}
 
 // Public read-only share viewer APIs. The raw token is never stored; only its SHA-256 hash is persisted.
 app.get('/public/share/:token',async(req,res,next)=>{try{const tokenHash=crypto.createHash('sha256').update(String(req.params.token||'')).digest('hex');const link=await getShareByHash(tokenHash);if(!link)return res.status(404).json({error:'Share link not found or revoked.'});if(link.expiresAt&&new Date(link.expiresAt)<new Date())return res.status(410).json({error:'Share link has expired.'});const p=await getProject(link.projectId);if(!p)return res.status(404).json({error:'Project not found.'});let safe=structuredClone(p);delete safe.sourceFile;if(safe.settings)delete safe.settings.approvedAssets;safe=JSON.parse(JSON.stringify(safe).replace(/\/api\/assets\/([a-zA-Z0-9_-]+)/g,(_,id)=>`/api/assets/${id}?share=${encodeURIComponent(req.params.token)}`));res.json({project:safe,share:{id:link.id,label:link.label,allowDownload:link.allowDownload,expiresAt:link.expiresAt}})}catch(e){next(e)}});
@@ -98,16 +100,16 @@ const replacementUpload=multer({
   }
 });
 
-app.get('/api/health',(req,res)=>res.json({ok:true,service:'Long Form Design Studio',ai:Boolean(process.env.OPENAI_API_KEY)}));
-app.get('/api/config',(req,res)=>res.json({
+app.get('/api/health',async(req,res)=>{const storage=await storageStatus();res.json({ok:true,service:'Long Form Design Studio',ai:Boolean(process.env.OPENAI_API_KEY),storage})});
+app.get('/api/config',async(req,res)=>{const storage=await storageStatus();res.json({
   studioName:BRAND.studioName, brand:BRAND, aiEnabled:Boolean(process.env.OPENAI_API_KEY),
   accessCodeRequired:Boolean(process.env.APP_ACCESS_CODE), model:process.env.OPENAI_MODEL||'gpt-5.6',
   supportedInputs:['pdf','doc','docx','ppt','pptx','xls','xlsx','csv'],
   designKnowledgeVersion:DESIGN_KNOWLEDGE_VERSION, qcThreshold:DESIGN_KNOWLEDGE.deliveryThreshold,
   autoImages:String(process.env.AUTO_GENERATE_IMAGES??'true').toLowerCase()!=='false',
-  auth:authCapabilities(), localization:localizationProfiles(), collaboration:true, persistentAssets:Boolean(process.env.DATABASE_URL),
+  auth:authCapabilities(), localization:localizationProfiles(), collaboration:true, persistentAssets:storage.durable, persistentProjects:storage.durable, storage,
   stockProvider:'Openverse', publicApi:true, webhooks:true, shareAnalytics:true,approvalRequired
-}));
+})});
 app.get('/api/me',async(req,res)=>{const identity=await requestIdentity(req);res.json({authenticated:Boolean(identity),identity,auth:authCapabilities()})});
 app.get('/api/templates',(req,res)=>res.json(TEMPLATES));
 app.get('/api/visual-options',(req,res)=>res.json({themes:THEMES,deckStyles:DECK_STYLES,imageSources:IMAGE_SOURCES,artStyles:ART_STYLES}));
@@ -205,6 +207,7 @@ app.delete('/api/webhooks/:id',requireRole('admin'),async(req,res,next)=>{try{aw
 
 app.post('/api/outline',async(req,res,next)=>{
   try{
+    await ensureDurableGenerationStorage();
     const {type,prompt,uploadId,contentMode='generate',audience,tone,language,visualStyle,deckStyle='auto',themeId='recykal-core',projectPalette=[],imageSource='mixed',artStyleId='auto',customArtStyle='',imageVariations=1,styleReferences=[],research=false,templateId,knowledgeIds=[]}=req.body||{};
     if(!['presentation','document','graphic'].includes(type))return res.status(400).json({error:'Choose Presentation, Document, or Graphic.'});
     const parsedFile=await loadAggregate(uploadId);if(parsedFile)parsedFile.uploadId=uploadId;if(!prompt?.trim()&&!parsedFile)return res.status(400).json({error:'Enter a brief or upload a source file.'});
@@ -215,6 +218,7 @@ app.post('/api/outline',async(req,res,next)=>{
 
 app.post('/api/generate',async(req,res,next)=>{
   try{
+    await ensureDurableGenerationStorage();
     const {type,prompt,uploadId,contentMode='generate',audience,tone,language,visualStyle,deckStyle='auto',themeId='recykal-core',projectPalette=[],imageSource='mixed',artStyleId='auto',customArtStyle='',imageVariations=1,styleReferences=[],approvedOutline=null,research=false,templateId,knowledgeIds=[]}=req.body||{};
     if(!['presentation','document','graphic'].includes(type)) return res.status(400).json({error:'Choose Presentation, Document, or Graphic.'});
     const parsedFile=await loadAggregate(uploadId);
@@ -256,8 +260,19 @@ app.post('/api/generate-stream',async(req,res,next)=>{
 // Stable automation API. API keys can use Authorization: Bearer lfs_... with granular scopes.
 app.get('/api/v1/projects',requireScope('read'),async(req,res,next)=>{try{res.json({data:await listProjects()})}catch(e){next(e)}});
 app.get('/api/v1/projects/:id',requireScope('read'),async(req,res,next)=>{try{const p=await getProject(req.params.id);if(!p)return res.status(404).json({error:'Project not found.'});res.json({data:p})}catch(e){next(e)}});
-app.post('/api/v1/generate',requireScope('write'),async(req,res,next)=>{try{const {type,prompt,contentMode='generate',audience,tone,language,visualStyle,deckStyle='auto',themeId='recykal-core',projectPalette=[],imageSource='mixed',artStyleId='auto',customArtStyle='',imageVariations=1,research=false,templateId,knowledgeIds=[]}=req.body||{};if(!['presentation','document','graphic'].includes(type))return res.status(400).json({error:'Choose a valid type.'});if(!String(prompt||'').trim())return res.status(400).json({error:'prompt is required for the public API.'});const knowledge=await getKnowledge(Array.isArray(knowledgeIds)?knowledgeIds.slice(0,12):[]);const template=getTemplate(templateId);const project=await generateProject({type,prompt,contentMode,audience,tone,language,visualStyle,deckStyle,themeId,projectPalette,imageSource,artStyleId,customArtStyle,imageVariations,research,template,knowledge});await saveProject(project);await saveVersion(project,'API generation');dispatchWebhook('project.created',{projectId:project.id,title:project.title,type:project.type,source:'public-api'});res.status(201).json({data:project})}catch(e){next(e)}});
+app.post('/api/v1/generate',requireScope('write'),async(req,res,next)=>{try{await ensureDurableGenerationStorage();const {type,prompt,contentMode='generate',audience,tone,language,visualStyle,deckStyle='auto',themeId='recykal-core',projectPalette=[],imageSource='mixed',artStyleId='auto',customArtStyle='',imageVariations=1,research=false,templateId,knowledgeIds=[]}=req.body||{};if(!['presentation','document','graphic'].includes(type))return res.status(400).json({error:'Choose a valid type.'});if(!String(prompt||'').trim())return res.status(400).json({error:'prompt is required for the public API.'});const knowledge=await getKnowledge(Array.isArray(knowledgeIds)?knowledgeIds.slice(0,12):[]);const template=getTemplate(templateId);const project=await generateProject({type,prompt,contentMode,audience,tone,language,visualStyle,deckStyle,themeId,projectPalette,imageSource,artStyleId,customArtStyle,imageVariations,research,template,knowledge});await saveProject(project);await saveVersion(project,'API generation');dispatchWebhook('project.created',{projectId:project.id,title:project.title,type:project.type,source:'public-api'});res.status(201).json({data:project})}catch(e){next(e)}});
 app.post('/api/v1/projects/:id/export',requireScope('export'),async(req,res,next)=>{try{const p=await getProject(req.params.id);if(!p)return res.status(404).json({error:'Project not found.'});const review=Boolean(req.body?.review);if(!review&&(!p.qc?.pass||p.qc?.stale))return res.status(422).json({error:'Final export requires passed/current QC.'});if(!review&&!finalApprovalOk(p))return res.status(422).json({error:'Final export requires workflow status Approved by an Approver.'});const format=String(req.body?.format||'pdf').toLowerCase();const profile=format==='pdf'&&String(req.body?.profile||'digital').toLowerCase()==='print'?'print':'digital';const file=await exportProject(p,format,{review,profile});const preflight=await preflightExport(file,format,p,{profile});if(!review&&!preflight.pass)return res.status(422).json({error:'Rendered export preflight failed.',preflight});res.json({data:{url:`/exports/${encodeURIComponent(path.basename(file))}`,filename:path.basename(file),profile,preflight}})}catch(e){next(e)}});
+
+app.post('/api/projects/recover',async(req,res,next)=>{try{
+  const incoming=req.body?.project||req.body;
+  if(!incoming||!incoming.id||!incoming.title||!['document','presentation','graphic'].includes(incoming.type)||!Array.isArray(incoming.pages))return res.status(400).json({error:'Recovery payload is not a valid Long Form Design Studio project.'});
+  const existing=await getProject(incoming.id);
+  if(existing)return res.json({project:existing,recovered:false,reason:'server-copy-exists'});
+  const recovered={...incoming,recovery:{...(incoming.recovery||{}),restoredAt:new Date().toISOString(),source:'browser-vault'}};
+  const saved=await saveProject(recovered);
+  await saveVersion(saved,'Recovered from browser safety vault');
+  res.status(201).json({project:saved,recovered:true});
+}catch(e){next(e)}});
 
 app.get('/api/projects',async(req,res,next)=>{try{res.json(await listProjects())}catch(e){next(e)}});
 app.get('/api/projects/:id',async(req,res,next)=>{try{const p=await getProject(req.params.id);if(!p)return res.status(404).json({error:'Project not found.'});res.json(p)}catch(e){next(e)}});
@@ -380,7 +395,8 @@ app.post('/api/projects/:id/global-replace',async(req,res,next)=>{
 
 app.post('/api/projects/:id/qc',async(req,res,next)=>{
   try{
-    const p=await getProject(req.params.id);if(!p)return res.status(404).json({error:'Project not found.'});
+    let p=await getProject(req.params.id);if(!p)return res.status(404).json({error:'Project not found.'});
+    p=enforceA4DocumentPages(p);
     let parsedFile=null;
     if(p.sourceFile?.uploadId){try{parsedFile=await loadAggregate(p.sourceFile.uploadId);if(parsedFile)parsedFile.uploadId=p.sourceFile.uploadId}catch{}}
     p.qc=await qualityControlProject(p,{parsedFile});
@@ -391,7 +407,8 @@ app.post('/api/projects/:id/qc',async(req,res,next)=>{
 
 app.post('/api/projects/:id/export',async(req,res,next)=>{
   try{
-    const p=await getProject(req.params.id);if(!p)return res.status(404).json({error:'Project not found.'});
+    let p=await getProject(req.params.id);if(!p)return res.status(404).json({error:'Project not found.'});
+    const beforeCount=p.pages?.length||0;p=enforceA4DocumentPages(p);if((p.pages?.length||0)!==beforeCount)p.qc={...(p.qc||{}),stale:true};
     let parsedFile=null;if(p.sourceFile?.uploadId){try{parsedFile=await loadAggregate(p.sourceFile.uploadId)}catch{}}
     if(!p.qc || p.qc.stale){p.qc=await qualityControlProject(p,{parsedFile});await saveProject(p);}
     const review=Boolean(req.body?.review);

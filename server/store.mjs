@@ -314,3 +314,12 @@ export async function listWebhooks(){await init();if(pool){const {rows}=await po
 export async function deleteWebhook(id){await init();if(pool)await pool.query('DELETE FROM webhooks WHERE id=$1',[id]);else{const all=await readJson(WEBHOOKS_JSON_PATH);await writeJson(all.filter(x=>x.id!==id),WEBHOOKS_JSON_PATH)}}
 
 export function databaseEnabled(){return Boolean(pool)}
+
+export async function storageStatus() {
+  await init();
+  return {
+    durable: Boolean(pool),
+    backend: pool ? 'postgres' : 'ephemeral-json',
+    warning: pool ? '' : 'Persistent project storage is not configured. Configure DATABASE_URL on Render; browser recovery remains available as a secondary safeguard.'
+  };
+}

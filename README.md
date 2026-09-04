@@ -1,3 +1,49 @@
+# Long Form Design Studio — Recykal
+
+## v1.1.6 — Durable projects + fixed A4 layout + recovery
+
+This release addresses a production data-loss incident and the layout/QC issues found in a real 20-page research booklet.
+
+### Critical durability change
+- **Postgres is now required before paid AI generation starts.** With `REQUIRE_DURABLE_STORAGE=true` (default in `render.yaml`), the Studio returns a clear 503 configuration error instead of spending OpenAI credits when `DATABASE_URL` is missing.
+- `/api/health` and `/api/config` report the active storage backend and whether it is durable.
+- **Browser Safety Vault (IndexedDB)** mirrors saved projects and each live generation checkpoint. If the server copy is missing, the Workspace can surface the browser recovery copy and restore it through `/api/projects/recover`.
+- Project open, autosave, QC, and export all attempt browser-vault recovery on a server 404.
+- Live page-by-page generation checkpoints every completed page to server storage and the browser vault.
+
+> Existing manually-created Render services do not automatically inherit the database declared in `render.yaml`. In Render → your web service → Environment, verify a real `DATABASE_URL` exists. If it is absent, create/link a Render Postgres database and use its **Internal Database URL**. Do not start a paid generation until `/api/health` shows `storage.durable: true`.
+
+### Fixed A4 document geometry
+- Document pages are physically constrained to **A4 portrait (210 × 297 mm)**. A two-column decision changes the internal composition only; it can no longer increase page height.
+- Content that does not fit is deterministically split onto a continuation page instead of extending the canvas or shrinking body text.
+- Tables continue across pages with repeated headers; paragraph and bullet overflow is split safely.
+- The editor/live preview use a fixed A4 aspect ratio and hide accidental overflow rather than silently creating a non-A4 page.
+- QC treats A4 overflow as a blocking export defect. Export applies A4 enforcement again before rendering.
+
+### Alignment, typography and tables
+- Fixed a PDF exporter bug that routed normal editorial pages through a two-column renderer (`? 2 : 2`). Editorial pages now remain one column unless the layout explicitly requests two columns.
+- Two-column PDF flow tracks each column independently and advances to a continuation page rather than overlapping unequal columns.
+- Heading size now adapts to title length; body and two-column typography use bounded A4-specific scales.
+- HTML/editor tables now calculate one shared column count and use the same grid definition for every row, preventing drifting/misaligned divisions.
+
+### QC improvement
+- Page-safe long-form generation no longer skips all automatic correction. If deterministic QC identifies bad pages, Studio AI can repair the worst affected pages **individually**, preserving facts/data/source content, rather than regenerating a whole 20–40 page project as one response.
+- Review exports remain available below the 85/100 final-delivery threshold.
+
+### Render verification
+After deployment, open `/api/health`. A production-safe response must include:
+
+```json
+{
+  "ok": true,
+  "storage": { "durable": true, "backend": "postgres" }
+}
+```
+
+If `durable` is false, fix `DATABASE_URL` first; v1.1.6 intentionally blocks paid generation in that state.
+
+---
+
 
 ## v1.1.5 — Page-safe incremental generation
 

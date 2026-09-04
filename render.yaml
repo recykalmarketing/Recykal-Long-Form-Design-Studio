@@ -30,6 +30,8 @@ services:
         value: recykal.com
       - key: REQUIRE_APPROVER_FOR_FINAL_EXPORT
         value: "false"
+      - key: REQUIRE_DURABLE_STORAGE
+        value: "true"
       - key: APP_ACCESS_CODE
         sync: false
       - key: AUTH_SECRET
