@@ -10,7 +10,7 @@ import path from 'node:path';
 import { v4 as uuid } from 'uuid';
 import sharp from 'sharp';
 import { parseUploadedFile } from './fileParsers.mjs';
-import { generateProject, generateProjectStream, generateNextPage, editWithAI, generateImage, qualityControlProject, reflowProject, generateOutline, generatePageVariations, repurposeProject, analyzeImageFocalPoint, localizeProject, enforceA4DocumentPages } from './ai.mjs';
+import { generateProject, generateProjectStream, generateNextPage, editWithAI, generateImage, qualityControlProject, reflowProject, generateOutline, generateContinuationOutline, appendProjectStream, buildDesignDNA, generatePageVariations, repurposeProject, analyzeImageFocalPoint, localizeProject, enforceA4DocumentPages } from './ai.mjs';
 import { listProjects, getProject, saveProject, deleteProject, listKnowledge, getKnowledge, saveKnowledge, deleteKnowledge, saveVersion, listVersions, getVersion, listComments, saveComment, patchComment, deleteComment, listUsers, upsertUser, patchUser, deactivateUser, createShareLink, getShareByHash, listShareLinks, revokeShareLink, recordShareEvent, projectAnalytics, createApiKey, listApiKeys, revokeApiKey, saveWebhook, listWebhooks, deleteWebhook, getBinaryAsset, saveSourceAggregate, getSourceAggregate, storageStatus } from './store.mjs';
 import { exportProject } from './exporters.mjs';
 import { preflightExport } from './preflight.mjs';
@@ -131,6 +131,7 @@ app.post('/api/upload',sourceUpload.array('files',10),async(req,res,next)=>{
       metadata:{files:parsed.map(p=>({filename:p.filename,kind:p.kind,metadata:p.metadata,extractionConfidence:p.extractionConfidence})),extractionConfidence:aggregateConfidence},
       extractionConfidence:aggregateConfidence,
       text:parsed.map(p=>`===== SOURCE FILE: ${p.filename} =====\n${p.text}`).join('\n\n'),
+      segments:parsed.flatMap(p=>(p.pages||[]).map(pg=>({filename:p.filename,kind:p.kind,index:Number(pg.index)||1,title:pg.title||'',text:String(pg.text||'')}))),
       assets:parsed.flatMap(p=>p.assets||[]),
       originalFiles:parsed.map(p=>({filename:p.filename,path:p.originalPath,url:p.originalUrl,extension:p.originalExtension}))
     };
@@ -146,6 +147,26 @@ async function loadAggregate(uploadId){
   const durable=await getSourceAggregate(uploadId);if(durable)return durable;
   const file=path.join(UPLOAD_ROOT,uploadId,'parsed.json');
   try{const data=JSON.parse(await fs.readFile(file,'utf8'));await saveSourceAggregate(uploadId,data.aggregate);return data.aggregate;}catch{return null;}
+}
+
+function aggregateSegmentsFromText(aggregate={}){
+  if(Array.isArray(aggregate.segments)&&aggregate.segments.length)return aggregate.segments;
+  const text=String(aggregate.text||''),out=[];let currentFile=aggregate.filename||'Source';
+  const lines=text.split('\n');let cur=null;
+  const flush=()=>{if(cur&&String(cur.text||'').trim())out.push(cur)};
+  for(const line of lines){const fm=line.match(/^===== SOURCE FILE: (.+) =====$/);if(fm){flush();cur=null;currentFile=fm[1];continue}const pm=line.match(/^--- (?:PAGE|SLIDE)\s+(\d+)(?::\s*(.*))?\s*---$/i);if(pm){flush();cur={filename:currentFile,kind:aggregate.kind||'source',index:Number(pm[1]),title:pm[2]||'',text:''};continue}if(cur)cur.text+=(cur.text?'\n':'')+line;}
+  flush();return out;
+}
+function scopeAggregate(aggregate,sourceRanges=[]){
+  if(!aggregate)return null;const ranges=Array.isArray(sourceRanges)?sourceRanges.filter(r=>r&&Number(r.start)>0&&Number(r.end)>=Number(r.start)):[];if(!ranges.length)return aggregate;
+  const segments=aggregateSegmentsFromText(aggregate);if(!segments.length)return aggregate;
+  const filtered=segments.filter(seg=>ranges.some(r=>(!r.filename||r.filename===seg.filename)&&seg.index>=Number(r.start)&&seg.index<=Number(r.end)));
+  if(!filtered.length){const e=new Error('The selected source page/slide range contains no extractable content. Check the range and try again.');e.status=400;throw e;}
+  const text=filtered.map(seg=>`===== SOURCE FILE: ${seg.filename} =====\n--- ${seg.kind==='pptx'?'SLIDE':'PAGE'} ${seg.index}${seg.title?`: ${seg.title}`:''} ---\n${seg.text}`).join('\n\n');
+  return {...aggregate,filename:`${aggregate.filename} · selected range`,text,segments:filtered,metadata:{...(aggregate.metadata||{}),sourceRanges:ranges,selectedSegments:filtered.length},sourceSelection:ranges};
+}
+async function loadCombinedProjectSource(project){
+  const ids=[];if(project?.sourceFile?.uploadId)ids.push(project.sourceFile.uploadId);for(const sf of project?.sourceFiles||[])if(sf?.uploadId&&!ids.includes(sf.uploadId))ids.push(sf.uploadId);const parts=[];for(const id of ids){const a=await loadAggregate(id);if(a)parts.push(a)}if(!parts.length)return null;if(parts.length===1)return parts[0];return {filename:parts.map(x=>x.filename).join(' + '),kind:'multi-batch',metadata:{batches:parts.length},extractionConfidence:parts.some(x=>x.extractionConfidence==='low')?'low':parts.some(x=>x.extractionConfidence==='medium')?'medium':'high',text:parts.map((x,i)=>`===== PROJECT SOURCE BATCH ${i+1}: ${x.filename} =====\n${x.text}`).join('\n\n'),assets:parts.flatMap(x=>x.assets||[])};
 }
 
 // Knowledge Hub: persistent extracted source material for the marketing team.
@@ -210,7 +231,7 @@ app.post('/api/outline',async(req,res,next)=>{
     await ensureDurableGenerationStorage();
     const {type,prompt,uploadId,contentMode='generate',audience,tone,language,visualStyle,deckStyle='auto',themeId='recykal-core',projectPalette=[],imageSource='mixed',artStyleId='auto',customArtStyle='',imageVariations=1,styleReferences=[],targetPageCount=null,research=false,templateId,knowledgeIds=[]}=req.body||{};
     if(!['presentation','document','graphic'].includes(type))return res.status(400).json({error:'Choose Presentation, Document, or Graphic.'});
-    const parsedFile=await loadAggregate(uploadId);if(parsedFile)parsedFile.uploadId=uploadId;if(!prompt?.trim()&&!parsedFile)return res.status(400).json({error:'Enter a brief or upload a source file.'});
+    let parsedFile=await loadAggregate(uploadId);if(parsedFile){parsedFile=scopeAggregate(parsedFile,req.body?.sourceRanges);parsedFile.uploadId=uploadId;}if(!prompt?.trim()&&!parsedFile)return res.status(400).json({error:'Enter a brief or upload a source file.'});
     const knowledge=await getKnowledge(Array.isArray(knowledgeIds)?knowledgeIds.slice(0,12):[]);const template=getTemplate(templateId);
     res.json(await generateOutline({type,prompt,parsedFile,contentMode,audience,tone,language,visualStyle,deckStyle,themeId,projectPalette,imageSource,artStyleId,customArtStyle,imageVariations,styleReferences,targetPageCount,research,template,knowledge}));
   }catch(e){next(e)}
@@ -221,8 +242,8 @@ app.post('/api/generate',async(req,res,next)=>{
     await ensureDurableGenerationStorage();
     const {type,prompt,uploadId,contentMode='generate',audience,tone,language,visualStyle,deckStyle='auto',themeId='recykal-core',projectPalette=[],imageSource='mixed',artStyleId='auto',customArtStyle='',imageVariations=1,styleReferences=[],targetPageCount=null,approvedOutline=null,research=false,templateId,knowledgeIds=[]}=req.body||{};
     if(!['presentation','document','graphic'].includes(type)) return res.status(400).json({error:'Choose Presentation, Document, or Graphic.'});
-    const parsedFile=await loadAggregate(uploadId);
-    if(parsedFile) parsedFile.uploadId=uploadId;
+    let parsedFile=await loadAggregate(uploadId);
+    if(parsedFile){parsedFile=scopeAggregate(parsedFile,req.body?.sourceRanges);parsedFile.uploadId=uploadId;}
     if(!prompt?.trim() && !parsedFile) return res.status(400).json({error:'Enter a brief or upload a source file.'});
     const knowledge=await getKnowledge(Array.isArray(knowledgeIds)?knowledgeIds.slice(0,12):[]);
     const template=getTemplate(templateId);
@@ -243,7 +264,7 @@ app.post('/api/generate-stream',async(req,res,next)=>{
   try{
     const {type,prompt,uploadId,contentMode='generate',audience,tone,language,visualStyle,deckStyle='auto',themeId='recykal-core',projectPalette=[],imageSource='mixed',artStyleId='auto',customArtStyle='',imageVariations=1,styleReferences=[],targetPageCount=null,approvedOutline=null,research=false,templateId,knowledgeIds=[]}=req.body||{};
     if(!['presentation','document','graphic'].includes(type)){send({stage:'error',error:'Choose a valid type.'});return res.end()}
-    let parsedFile=null;if(uploadId){parsedFile=await loadAggregate(uploadId);if(!parsedFile){send({stage:'error',error:'Uploaded source is no longer available. Upload it again.'});return res.end()}parsedFile.uploadId=uploadId;}
+    let parsedFile=null;if(uploadId){parsedFile=await loadAggregate(uploadId);if(!parsedFile){send({stage:'error',error:'Uploaded source is no longer available. Upload it again.'});return res.end()}parsedFile=scopeAggregate(parsedFile,req.body?.sourceRanges);parsedFile.uploadId=uploadId;}
     const knowledge=await getKnowledge(Array.isArray(knowledgeIds)?knowledgeIds.slice(0,12):[]);const template=getTemplate(templateId);
     send({stage:'accepted',type,totalEstimate:Array.isArray(approvedOutline)?approvedOutline.length:null,message:'Generation started.'});
     const checkpoint=async(partial,meta={})=>{
@@ -283,6 +304,24 @@ app.get('/api/projects/:id/versions/:versionId/diff',async(req,res,next)=>{try{c
 
 app.put('/api/projects/:id',async(req,res,next)=>{try{const current=await getProject(req.params.id);if(!current)return res.status(404).json({error:'Project not found.'});const baseRevision=Number(req.body?.baseRevision??req.get('if-match')??current.revision);if(Number.isFinite(baseRevision)&&Number(current.revision||0)!==baseRevision)return res.status(409).json({error:'This project changed in another session. Refresh or merge before saving.',currentRevision:current.revision,project:current});const oldStatus=current.workflow?.status||'Draft',newStatus=req.body?.workflow?.status||oldStatus;if((oldStatus==='Approved'||newStatus==='Approved')&&!hasRole(req.identity,'approver'))return res.status(403).json({error:'Only an Approver or Admin can approve or reopen an approved project.'});const p={...req.body,id:req.params.id};delete p.baseRevision;if(newStatus==='Approved'&&oldStatus!=='Approved')p.workflow={...(p.workflow||{}),status:'Approved',approvedAt:new Date().toISOString(),approvedBy:req.identity?.name||req.identity?.email||'Approver'};const designSig=x=>JSON.stringify({title:x?.title,type:x?.type,pages:x?.pages,settings:x?.settings,contentMode:x?.contentMode,sources:x?.sources,sourceFile:x?.sourceFile});if(current.qc){p.qc=designSig(current)===designSig(p)?current.qc:{...current.qc,stale:true};}const saved=await saveProject(p);broadcast(saved.id,{type:'project-updated',project:saved,reason:'manual-save',editor:req.identity?.name});dispatchWebhook('project.updated',{projectId:saved.id,reason:'manual-save',revision:saved.revision});res.json(saved)}catch(e){next(e)}});
 app.delete('/api/projects/:id',async(req,res,next)=>{try{await deleteProject(req.params.id);res.json({ok:true})}catch(e){next(e)}});
+
+
+app.post('/api/projects/:id/append-outline',async(req,res,next)=>{
+  try{
+    await ensureDurableGenerationStorage();const p=await getProject(req.params.id);if(!p)return res.status(404).json({error:'Project not found.'});if(p.type!=='document')return res.status(400).json({error:'Continuation batches are supported for documents only.'});
+    const {uploadId,reuseExistingSource=false,sourceRanges=[],instruction='',additionalPageCount=null,contentMode=p.contentMode||'preserve',knowledgeIds=[]}=req.body||{};let parsedFile=null;const sourceUploadId=uploadId||(reuseExistingSource?p.sourceFile?.uploadId:null);if(sourceUploadId){parsedFile=await loadAggregate(sourceUploadId);if(!parsedFile)return res.status(404).json({error:'Continuation source is no longer available. Upload it again.'});parsedFile=scopeAggregate(parsedFile,sourceRanges);parsedFile.uploadId=sourceUploadId;}if(!parsedFile&&!instruction.trim())return res.status(400).json({error:'Attach the next source batch, choose a range from the existing source, or provide a continuation instruction.'});const knowledge=await getKnowledge(Array.isArray(knowledgeIds)?knowledgeIds.slice(0,12):[]);const outline=await generateContinuationOutline({project:p,parsedFile,instruction,additionalPageCount,contentMode,knowledge});res.json({...outline,designDNA:buildDesignDNA(p)});
+  }catch(e){next(e)}
+});
+
+app.post('/api/projects/:id/append-stream',async(req,res,next)=>{
+  res.setHeader('Content-Type','application/x-ndjson; charset=utf-8');res.setHeader('Cache-Control','no-cache, no-transform');res.setHeader('X-Accel-Buffering','no');res.flushHeaders?.();const send=event=>{if(!res.writableEnded&&!res.destroyed)res.write(JSON.stringify({...event,at:new Date().toISOString()})+'\n')};const heartbeat=setInterval(()=>send({stage:'heartbeat'}),12000);heartbeat.unref?.();const controller=new AbortController();res.on('close',()=>{clearInterval(heartbeat);if(!res.writableEnded)controller.abort()});
+  try{
+    await ensureDurableGenerationStorage();let p=await getProject(req.params.id);if(!p){send({stage:'error',error:'Project not found.'});return res.end()}if(p.type!=='document'){send({stage:'error',error:'Continuation batches are supported for documents only.'});return res.end()}
+    const {uploadId,reuseExistingSource=false,sourceRanges=[],instruction='',additionalPageCount=null,approvedOutline=null,contentMode=p.contentMode||'preserve',knowledgeIds=[]}=req.body||{};let parsedFile=null;const sourceUploadId=uploadId||(reuseExistingSource?p.sourceFile?.uploadId:null);if(sourceUploadId){parsedFile=await loadAggregate(sourceUploadId);if(!parsedFile){send({stage:'error',error:'Continuation source is no longer available. Upload it again.'});return res.end()}parsedFile=scopeAggregate(parsedFile,sourceRanges);parsedFile.uploadId=sourceUploadId;}if(!parsedFile&&!instruction.trim()){send({stage:'error',error:'Attach the next source batch, choose a range from the existing source, or provide a continuation instruction.'});return res.end()}
+    const knowledge=await getKnowledge(Array.isArray(knowledgeIds)?knowledgeIds.slice(0,12):[]);await saveVersion(p,'Before continuation batch');const checkpoint=async(partial,meta={})=>{p=await saveProject(partial);if(meta.stage==='append-page')broadcast(p.id,{type:'project-updated',project:p,reason:'continuation-checkpoint'});};
+    const next=await appendProjectStream(p,{parsedFile,instruction,additionalPageCount,approvedOutline,contentMode,knowledge,signal:controller.signal,checkpoint},async event=>send(event));p=await saveProject(next);await saveVersion(p,`Continuation batch ${(p.continuationBatches||[]).length} complete`);broadcast(p.id,{type:'project-updated',project:p,reason:'continuation-complete'});dispatchWebhook('project.updated',{projectId:p.id,reason:'continuation-complete',pages:p.pages?.length||0});send({stage:'append-saved',project:p});res.end();
+  }catch(e){try{if(e.project)await saveProject(e.project)}catch{}send({stage:'error',error:e.message||'Continuation failed.',projectId:req.params.id,completedPages:e.completedPages||0,batchId:e.batchId||null});res.end()}finally{clearInterval(heartbeat)}
+});
 
 app.post('/api/projects/:id/continue',async(req,res,next)=>{
   try{const p=await getProject(req.params.id);if(!p)return res.status(404).json({error:'Project not found.'});if(p.type!=='document')return res.status(400).json({error:'Continue is for documents.'});await saveVersion(p,'Before AI continue');const page=await generateNextPage(p,req.body?.instruction);p.pages.push(page);p.qc={...(p.qc||{}),stale:true};await saveProject(p);res.json({page,project:p})}catch(e){next(e)}
@@ -398,7 +437,7 @@ app.post('/api/projects/:id/qc',async(req,res,next)=>{
     let p=await getProject(req.params.id);if(!p)return res.status(404).json({error:'Project not found.'});
     p=enforceA4DocumentPages(p);
     let parsedFile=null;
-    if(p.sourceFile?.uploadId){try{parsedFile=await loadAggregate(p.sourceFile.uploadId);if(parsedFile)parsedFile.uploadId=p.sourceFile.uploadId}catch{}}
+    try{parsedFile=await loadCombinedProjectSource(p)}catch{}
     p.qc=await qualityControlProject(p,{parsedFile});
     await saveProject(p);broadcast(p.id,{type:'qc-updated',qc:p.qc});dispatchWebhook('project.qc',{projectId:p.id,score:p.qc.totalScore,pass:p.qc.pass});
     res.json({qc:p.qc,project:p});

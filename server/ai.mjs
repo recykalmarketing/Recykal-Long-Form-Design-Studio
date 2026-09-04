@@ -60,7 +60,9 @@ function normalizePage(page={}) {
     layout: page.layout || 'editorial',
     blocks: (page.blocks || []).map(normalizeBlock),
     speakerNotes: page.speakerNotes || '',
-    locked: Boolean(page.locked)
+    locked: Boolean(page.locked),
+    continuationBatchId: page.continuationBatchId || null,
+    continuationBatchNumber: Number.isFinite(Number(page.continuationBatchNumber)) ? Number(page.continuationBatchNumber) : null
   };
 }
 
@@ -106,6 +108,9 @@ export function normalizeProject(raw, options={}) {
     qc: options.qc || raw.qc || null,
     workflow: options.workflow || raw.workflow || {status:'Draft',assignee:'',comments:[]},
     exportPreflight: options.exportPreflight || raw.exportPreflight || null,
+    continuationBatches: options.continuationBatches || raw.continuationBatches || [],
+    sourceFiles: options.sourceFiles || raw.sourceFiles || (options.sourceFile ? [options.sourceFile] : []),
+    designDNA: options.designDNA || raw.designDNA || null,
     createdAt: options.createdAt || now,
     updatedAt: now
   };
@@ -445,6 +450,62 @@ function projectOptionsFromGeneration(options={}){
   };
 }
 
+
+function mostCommonJson(values=[]){
+  const counts=new Map();for(const v of values){if(v==null)continue;const key=JSON.stringify(v);counts.set(key,(counts.get(key)||0)+1)}
+  const best=[...counts.entries()].sort((a,b)=>b[1]-a[1])[0];if(!best)return null;try{return JSON.parse(best[0])}catch{return null}
+}
+export function buildDesignDNA(project={}){
+  const pages=(project.pages||[]).filter(p=>!['cover','closing'].includes(p.layout));
+  const textStyles={};
+  for(const type of ['kicker','heading','subheading','paragraph','quote']){
+    const styles=[];for(const pg of pages)for(const b of pg.blocks||[])if(b.type===type&&b.style&&Object.keys(b.style).length)styles.push(normalizeTextStyle(b.style));
+    textStyles[type]=mostCommonJson(styles)||{};
+  }
+  const tableStyles=[];for(const pg of pages)for(const b of pg.blocks||[])if(b.type==='table'&&b.tableStyle)tableStyles.push(normalizeTableStyle(b.tableStyle));
+  const layoutSequence=pages.slice(-10).map(p=>p.layout||'editorial');
+  const layoutCounts={};for(const p of pages)layoutCounts[p.layout||'editorial']=(layoutCounts[p.layout||'editorial']||0)+1;
+  return {
+    version:1,
+    capturedAt:new Date().toISOString(),
+    themeId:project.settings?.themeId||'recykal-core',
+    projectPalette:normalizeProjectPalette(project.settings?.projectPalette||[]),
+    deckStyle:project.settings?.deckStyle||'auto',
+    imageSource:project.settings?.imageSource||'mixed',
+    artStyleId:project.settings?.artStyleId||'auto',
+    customArtStyle:project.settings?.customArtStyle||'',
+    masterFields:structuredClone(project.settings?.masterFields||{headerText:'',footerText:'',pageNumbers:true,logoMode:'cover-only'}),
+    templateId:project.settings?.templateId||null,
+    templateName:project.settings?.templateName||null,
+    language:project.settings?.language||'English (India)',
+    tone:project.settings?.tone||'Professional, confident and precise',
+    audience:project.settings?.audience||'Recykal marketing stakeholders',
+    textStyles,
+    tableStyle:mostCommonJson(tableStyles)||{variant:'clean',density:'comfortable',numericAlign:'right',firstColumnEmphasis:true,verticalRules:false},
+    layoutSequence,
+    layoutCounts
+  };
+}
+function applyDesignDNAToPage(page,dna,batchId,batchNumber){
+  const next=normalizePage({...page,continuationBatchId:batchId,continuationBatchNumber:batchNumber});
+  next.blocks=(next.blocks||[]).map(b=>{
+    const out={...b};
+    if(['kicker','heading','subheading','paragraph','quote'].includes(out.type)&&(!out.style||!Object.keys(out.style).length)&&dna?.textStyles?.[out.type]&&Object.keys(dna.textStyles[out.type]).length)out.style=normalizeTextStyle(dna.textStyles[out.type]);
+    if(out.type==='table'&&dna?.tableStyle)out.tableStyle=normalizeTableStyle({...dna.tableStyle,...(out.tableStyle||{})});
+    return out;
+  });
+  return next;
+}
+function continuationOptions(project,overrides={}){
+  const s=project.settings||{},dna=overrides.designDNA||buildDesignDNA(project);
+  return {
+    type:'document',prompt:`${overrides.instruction||'Continue this approved long-form publication with the supplied next batch of content.'}\n\n${continuationDNAPrompt(dna)}`,parsedFile:overrides.parsedFile||null,contentMode:overrides.contentMode||project.contentMode||'preserve',audience:s.audience||dna.audience,tone:s.tone||dna.tone,language:s.language||dna.language,visualStyle:s.visualStyle||'Continue the established project visual language exactly.',deckStyle:s.deckStyle||dna.deckStyle||'auto',themeId:s.themeId||dna.themeId||'recykal-core',projectPalette:s.projectPalette||dna.projectPalette||[],imageSource:s.imageSource||dna.imageSource||'mixed',artStyleId:s.artStyleId||dna.artStyleId||'auto',customArtStyle:s.customArtStyle||dna.customArtStyle||'',imageVariations:s.imageVariations||1,styleReferences:s.styleReferences||[],targetPageCount:overrides.additionalPageCount||null,research:overrides.contentMode==='preserve'?false:Boolean(overrides.research),template:overrides.template||null,knowledge:overrides.knowledge||[],approvedOutline:overrides.approvedOutline||null,signal:overrides.signal,checkpoint:overrides.checkpoint,designDNA:dna
+  };
+}
+function continuationDNAPrompt(dna={}){
+  return `CONTINUATION DESIGN DNA (this existing project is the style source):\n- Theme: ${dna.themeId||'recykal-core'}\n- Project palette: ${(dna.projectPalette||[]).join(', ')||'default Recykal'}\n- Composition style: ${dna.deckStyle||'auto'}\n- Recent page rhythm: ${(dna.layoutSequence||[]).join(' -> ')||'editorial'}\n- Typography overrides: ${JSON.stringify(dna.textStyles||{})}\n- Table treatment: ${JSON.stringify(dna.tableStyle||{})}\n- Image language: ${dna.imageSource||'mixed'} / ${dna.artStyleId||'auto'}${dna.customArtStyle?` / ${dna.customArtStyle}`:''}\n- Master fields: ${JSON.stringify(dna.masterFields||{})}\nTreat the existing publication as the immutable style source. New pages may introduce new content-led compositions, but they must look like the next chapter of the same designed book, not a new template or redesign.`;
+}
+
 function terms(text=''){
   return String(text).toLowerCase().replace(/[^a-z0-9%₹$€£]+/g,' ').split(/\s+/).filter(x=>x.length>3).slice(0,40);
 }
@@ -645,6 +706,46 @@ export async function qualityControlProject(project,{parsedFile=null}={}) {
   review.totalScore=Object.keys(caps).reduce((sum,k)=>sum+review[k],0);
   review.pass=review.totalScore>=DESIGN_KNOWLEDGE.deliveryThreshold && !(review.blockingDefects||[]).length;
   return mergeQualityChecks(staticQc,review);
+}
+
+
+export async function generateContinuationOutline({project,parsedFile,instruction='',additionalPageCount=null,contentMode,knowledge=[]}){
+  if(project?.type!=='document')throw new Error('Continuation batches are supported for documents only.');
+  const dna=buildDesignDNA(project);const exact=normalizedTargetPageCount(additionalPageCount,'document');
+  const prior=project.pages?.slice(-6).map((p,i)=>({page:Math.max(1,(project.pages?.length||0)-5+i),title:p.title,layout:p.layout,blocks:(p.blocks||[]).slice(0,5).map(b=>({type:b.type,text:String(b.text||b.label||b.value||'').slice(0,320)}))}))||[];
+  const source=String(parsedFile?.text||'').slice(0,180000);const knowledgeText=(knowledge||[]).slice(0,3).map(k=>`${k.filename}: ${String(k.text||'').slice(0,7000)}`).join('\n\n');
+  const countRule=exact?`Return exactly ${exact} NEW continuation page items. These are additional pages; do not count or regenerate existing pages.`:'Choose only the number of NEW pages genuinely required by the continuation source. Do not pad.';
+  const raw=await structuredResponse({name:'recykal_continuation_outline',schema:outlineSchema,research:false,maxOutputTokens:10000,attempts:2,input:`Plan the NEXT APPROVED BATCH of an existing Recykal long-form document. ${countRule}\n\nPROJECT: ${project.title}\nEXISTING PAGE COUNT: ${project.pages?.length||0}\nUSER CONTINUATION INSTRUCTION: ${instruction||'Continue with the supplied source in logical sequence.'}\nCONTENT MODE: ${contentMode||project.contentMode||'preserve'}\n\n${continuationDNAPrompt(dna)}\n\nRECENT EXISTING PAGES (avoid repetition and continue narrative):\n${JSON.stringify(prior)}\n\nNEW / REMAINING AUTHORITATIVE SOURCE:\n${source||'No new source text was supplied; continue only from the instruction and existing project context.'}${knowledgeText?`\n\nSUPPLEMENTAL KNOWLEDGE:\n${knowledgeText}`:''}\n\nCONTINUATION PLAN RULES:\n- Do NOT create a new cover page, new brand identity, or final closing page.\n- A section divider is allowed if the new batch begins a major new chapter.\n- Continue existing page numbering, headers/footers, typography, colour logic, table styling, icon language and visual rhythm.\n- Preserve the existing closing page for the eventual end of the combined project.\n- Do not repeat content already present in the recent pages.\n- Use timeline/process/table/chart/image-led layouts only when the new evidence requires them.\n- Every item describes one physical A4 portrait page.`});
+  let items=raw?.items||[];if(exact)items=reconcileOutlineToTarget(items,exact);items=items.map(x=>({...x,layout:['cover','closing'].includes(x.layout)?'editorial':x.layout}));return {...raw,items,title:raw?.title||`${project.title} — continuation`,strategy:raw?.strategy||'Continue the existing publication using the same design DNA.'};
+}
+
+export async function appendProjectStream(existingProject,overrides={},onProgress=async()=>{}){
+  if(existingProject?.type!=='document')throw new Error('Continuation batches are supported for documents only.');
+  const project=structuredClone(existingProject);const batchId=`batch_${uuid()}`,batchNumber=(project.continuationBatches?.length||0)+1;const dna=buildDesignDNA(project);project.designDNA=dna;
+  const options=continuationOptions(project,{...overrides,designDNA:dna});
+  let planItems=Array.isArray(overrides.approvedOutline)&&overrides.approvedOutline.length?overrides.approvedOutline:null;
+  if(!planItems){await onProgress({stage:'append-planning',message:'Planning the next approved batch against the existing design DNA…'});const outline=await generateContinuationOutline({project,parsedFile:options.parsedFile,instruction:overrides.instruction,additionalPageCount:overrides.additionalPageCount,contentMode:options.contentMode,knowledge:options.knowledge});planItems=outline.items||[];}
+  const exact=normalizedTargetPageCount(overrides.additionalPageCount,'document');if(exact)planItems=reconcileOutlineToTarget(planItems,exact);if(!planItems.length)throw new Error('Studio AI could not create a continuation plan from the supplied material.');
+  planItems=planItems.map(x=>({...x,layout:['cover','closing'].includes(x.layout)?'editorial':x.layout}));
+  const originalCount=project.pages?.length||0;const closing=(project.pages||[]).length&&project.pages.at(-1)?.layout==='closing'?project.pages.pop():null;const insertAt=project.pages.length;
+  project.continuationBatches=project.continuationBatches||[];const batch={id:batchId,number:batchNumber,status:'running',startedAt:new Date().toISOString(),instruction:overrides.instruction||'',requestedPages:exact||null,contentMode:options.contentMode,sourceFile:options.parsedFile?{filename:options.parsedFile.filename,kind:options.parsedFile.kind,uploadId:options.parsedFile.uploadId||null,metadata:options.parsedFile.metadata,extractionConfidence:options.parsedFile.extractionConfidence||null}:null,startPage:insertAt+1,pagesAdded:0};project.continuationBatches.push(batch);
+  project.generation={status:'running',mode:'continuation',batchId,completed:0,total:planItems.length,startedAt:batch.startedAt,lastError:''};await onProgress({stage:'append-accepted',batchId,batchNumber,total:planItems.length,existingPages:originalCount,message:`Continuation batch ${batchNumber} started.`});if(typeof overrides.checkpoint==='function')await overrides.checkpoint(project,{stage:'append-accepted',batchId});
+  const newPages=[];
+  try{
+    for(let i=0;i<planItems.length;i++){
+      await onProgress({stage:'append-page-start',batchId,index:i,total:planItems.length,absoluteIndex:insertAt+i,message:`Building continuation page ${i+1} of ${planItems.length}…`});
+      const working={...project,pages:[...(project.pages||[]),...newPages]};const result=await generatePlannedPage(options,working,planItems[i],i,planItems.length,async ev=>{if(ev.stage==='retry')await onProgress({...ev,stage:'append-retry',batchId});});
+      const page=applyDesignDNAToPage(result.page,dna,batchId,batchNumber);newPages.push(page);project.sources=mergeSources(project.sources,result.sources);batch.pagesAdded=newPages.length;project.generation={...project.generation,completed:newPages.length,lastError:''};
+      const checkpointProject={...project,pages:[...(project.pages||[]),...newPages,...(closing?[closing]:[])]};if(typeof overrides.checkpoint==='function')await overrides.checkpoint(checkpointProject,{stage:'append-page',batchId,index:i});await onProgress({stage:'append-page',batchId,index:i,total:planItems.length,absoluteIndex:insertAt+i,page});
+    }
+    // Materialize only the newly appended pages, while inheriting the project's established visual system.
+    let batchProject=normalizeProject({title:project.title,summary:project.summary,pages:newPages,sources:project.sources},{id:project.id,type:'document',sourceFile:options.parsedFile?{filename:options.parsedFile.filename,kind:options.parsedFile.kind,metadata:options.parsedFile.metadata,assets:options.parsedFile.assets||[],uploadId:options.parsedFile.uploadId||null,extractionConfidence:options.parsedFile.extractionConfidence||null}:project.sourceFile,inputMode:options.parsedFile?'file':project.inputMode,contentMode:options.contentMode,settings:{...project.settings,targetPageCount:exact,approvedAssets:[...(project.settings?.approvedAssets||[]),...(options.parsedFile?.assets||[])]},createdAt:project.createdAt,designDNA:dna});
+    batchProject=await materializeAutoImages(batchProject,async ev=>onProgress({...ev,stage:ev.stage==='visual'?'append-visual':ev.stage,batchId}));
+    const finalizedNew=batchProject.pages.map(p=>applyDesignDNAToPage(p,dna,batchId,batchNumber));project.pages=[...(project.pages||[]),...finalizedNew,...(closing?[closing]:[])];
+    if(options.parsedFile){const sf={filename:options.parsedFile.filename,kind:options.parsedFile.kind,metadata:options.parsedFile.metadata,assets:options.parsedFile.assets||[],uploadId:options.parsedFile.uploadId||null,extractionConfidence:options.parsedFile.extractionConfidence||null,batchId};project.sourceFiles=[...((project.sourceFiles&&project.sourceFiles.length)?project.sourceFiles:(project.sourceFile?[project.sourceFile]:[])),sf].filter(Boolean);project.settings={...(project.settings||{}),approvedAssets:[...(project.settings?.approvedAssets||[]),...(options.parsedFile.assets||[])].slice(-120)};}
+    project.settings={...(project.settings||{}),targetPageCount:exact?originalCount+finalizedNew.length:null,continuityProfile:dna,pageFormat:'A4',pageOrientation:'portrait',fixedPageSize:true};batch.status='complete';batch.completedAt=new Date().toISOString();batch.pagesAdded=finalizedNew.length;batch.endPage=insertAt+finalizedNew.length;batch.finalTotalPages=project.pages.length;project.qc={...(project.qc||{}),stale:true};project.generation={status:'complete',mode:'continuation',batchId,completed:finalizedNew.length,total:planItems.length,finishedAt:batch.completedAt,lastError:''};
+    if(typeof overrides.checkpoint==='function')await overrides.checkpoint(project,{stage:'append-complete',batchId});await onProgress({stage:'append-complete',batchId,batchNumber,pagesAdded:finalizedNew.length,project});return project;
+  }catch(err){batch.status='failed';batch.failedAt=new Date().toISOString();batch.pagesAdded=newPages.length;batch.lastError=err.message||'Continuation failed';project.pages=[...(project.pages||[]),...newPages,...(closing?[closing]:[])];project.generation={status:'failed',mode:'continuation',batchId,completed:newPages.length,total:planItems.length,lastError:batch.lastError,failedAt:batch.failedAt};project.qc={...(project.qc||{}),stale:true};if(typeof overrides.checkpoint==='function')await overrides.checkpoint(project,{stage:'append-failed',batchId,error:batch.lastError});err.project=project;err.batchId=batchId;err.completedPages=newPages.length;throw err;}
 }
 
 export async function generateNextPage(project, instruction='Continue naturally with the next section.') {

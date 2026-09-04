@@ -245,3 +245,7 @@ Per current production scope, the Print PDF profile no longer generates bleed, T
 The editor now supports Google Docs/Slides-style direct authoring for text blocks: inline copy editing, point-size controls, semantic type presets, bold/italic/underline, alignment, line spacing, text/highlight colours, clear formatting, and AI Shorten/Expand. Common keyboard shortcuts are supported. Manual formatting survives AI layout/reflow/localisation operations.
 
 The A4 renderer now uses an explicit long-form type scale and stronger table architecture: stable content-aware columns, structured row/cell editing, repeated headers, numeric alignment, first-column emphasis, multiple table styles/densities, and readable continuation groups for wide tables. See `docs/typography-and-table-system.md`.
+
+## Staged continuation of long publications
+
+Document projects can be extended later through **Add continuation batch**. Attach remaining source files, or reuse a selected page/slide range from the original source. New pages are appended page-by-page using the existing project as the Design DNA/style source, so typography, masters, palette, tables, visual language, A4 dimensions and numbering remain consistent. Existing pages are not regenerated. See `docs/continuation-batches.md`.

@@ -21,4 +21,4 @@ for(const bin of ['gs','pdfinfo','pdffonts','pdfimages','pdftoppm','libreoffice'
 const pkg=JSON.parse(await fs.readFile('package.json','utf8'));
 if(!pkg.scripts?.start||!pkg.scripts?.build||!pkg.scripts?.check)throw new Error('Build validation failed: required npm scripts are missing.');
 if(String(pkg.scripts.check).includes('selftest'))throw new Error('Build validation failed: npm run check must remain deployment-safe; use check:full for export diagnostics.');
-console.log('Deployment-safe build validation passed. Full export self-test is available with: npm run check');
+console.log('Deployment-safe build validation passed. Full export self-test is available with: npm run check:full');
