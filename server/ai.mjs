@@ -20,6 +20,13 @@ function client() {
   return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 }
 
+function normalizeTextStyle(style={}){
+  const out={};const size=Number(style.fontSize);if(Number.isFinite(size))out.fontSize=Math.max(6,Math.min(96,size));const weight=Number(style.fontWeight);if([300,400,500,600,700,800].includes(weight))out.fontWeight=weight;if(style.italic!=null)out.italic=Boolean(style.italic);if(style.underline!=null)out.underline=Boolean(style.underline);if(['left','center','right','justify'].includes(style.textAlign))out.textAlign=style.textAlign;const lh=Number(style.lineHeight);if(Number.isFinite(lh))out.lineHeight=Math.max(1,Math.min(2.2,lh));if(/^#[0-9A-F]{6}$/i.test(String(style.textColor||'')))out.textColor=String(style.textColor).toUpperCase();if(/^#[0-9A-F]{6}$/i.test(String(style.highlightColor||'')))out.highlightColor=String(style.highlightColor).toUpperCase();return out;
+}
+function normalizeTableStyle(style={}){
+  const out={variant:['clean','striped','ledger','minimal'].includes(style.variant)?style.variant:'clean',density:['comfortable','compact'].includes(style.density)?style.density:'comfortable',numericAlign:['left','center','right'].includes(style.numericAlign)?style.numericAlign:'right',firstColumnEmphasis:style.firstColumnEmphasis!==false,verticalRules:Boolean(style.verticalRules)};if(Array.isArray(style.columnWidths)&&style.columnWidths.length)out.columnWidths=style.columnWidths.map(Number).filter(x=>Number.isFinite(x)&&x>0).slice(0,20);return out;
+}
+
 function normalizeBlock(block={}) {
   return {
     id: block.id || uuid(),
@@ -40,7 +47,9 @@ function normalizeBlock(block={}) {
     focalX: Number.isFinite(Number(block.focalX)) ? Number(block.focalX) : 50,
     focalY: Number.isFinite(Number(block.focalY)) ? Number(block.focalY) : 50,
     provenance: block.provenance || null,
-    imageVariations: Array.isArray(block.imageVariations) ? block.imageVariations : []
+    imageVariations: Array.isArray(block.imageVariations) ? block.imageVariations : [],
+    style: normalizeTextStyle(block.style||{}),
+    tableStyle: normalizeTableStyle(block.tableStyle||{})
   };
 }
 
@@ -53,6 +62,31 @@ function normalizePage(page={}) {
     speakerNotes: page.speakerNotes || '',
     locked: Boolean(page.locked)
   };
+}
+
+function inheritManualBlockFormatting(sourceBlock,targetBlock){
+  if(!sourceBlock||!targetBlock)return targetBlock;
+  const next={...targetBlock};
+  if(sourceBlock.style&&Object.keys(sourceBlock.style).length)next.style=normalizeTextStyle(sourceBlock.style);
+  if(sourceBlock.tableStyle&&Object.keys(sourceBlock.tableStyle).length)next.tableStyle=normalizeTableStyle(sourceBlock.tableStyle);
+  return next;
+}
+function inheritPageFormatting(sourcePage,targetPage){
+  if(!sourcePage||!targetPage)return targetPage;
+  const counters={};
+  const byType={};
+  for(const b of sourcePage.blocks||[]){(byType[b.type] ||= []).push(b)}
+  targetPage.blocks=(targetPage.blocks||[]).map((b)=>{
+    const direct=(sourcePage.blocks||[]).find(x=>x.id&&b.id&&x.id===b.id);
+    if(direct)return inheritManualBlockFormatting(direct,b);
+    const i=counters[b.type]||0;counters[b.type]=i+1;
+    return inheritManualBlockFormatting((byType[b.type]||[])[i],b);
+  });
+  return targetPage;
+}
+function inheritProjectFormatting(sourceProject,targetProject){
+  targetProject.pages=(targetProject.pages||[]).map((page,i)=>inheritPageFormatting(sourceProject?.pages?.[i],page));
+  return targetProject;
 }
 
 export function normalizeProject(raw, options={}) {
@@ -287,7 +321,7 @@ STRUCTURE RULES:
 - PAGE FILL / DENSITY: Avoid accidental dead space. For ordinary narrative/evidence pages, target roughly 68–88% meaningful visual occupancy. Sparse pages are allowed only when they are intentional opening, divider, quote, pause or closing pages. If content is dense, recompose into 2 columns, tables, stat grids or evidence panels instead of shrinking type.
 - A4 IS A HARD PHYSICAL CONSTRAINT: every document page must remain exactly A4 portrait (210 × 297 mm). Never increase page height to fit content. If content does not fit, create a continuation page.
 - COLUMNS: On A4 documents, use the 6-column editorial grid to create 1-column, 2-column or 3-module compositions according to content. Use 2 text columns for dense body narrative; use 3 columns only for short cards/facts, never for long paragraphs. A two-column decision changes composition only, never physical page dimensions.
-- TABLES: Preserve every source cell. Use clear headers, row grouping, alignment and adequate row height. Never truncate or ellipsize critical table values. If a table is too large, continue it on a new page and repeat the header.
+- TABLES: Preserve every source cell. Use one stable column grid, content-aware column widths, a clear repeated header row, content-driven row heights, right/tabular alignment for numeric values, first-column emphasis when it helps scanning, and restrained horizontal rules rather than boxing every cell. Never truncate or ellipsize critical values. For very wide A4 tables, split columns into readable continuation groups while repeating the identifying first column; do not shrink table text below readable size.
 - INFOGRAPHICS: Whenever content expresses sequence, chronology, comparison, system architecture or grouped facts, prefer a process/timeline/comparison/stat layout rather than plain paragraphs. Use native vector lines, nodes, arrows and relevant icons.
 - ICONS / VECTORS: Use relevant vector iconography for short semantic items (policy, people, finance, circularity, location, technology, target, governance, logistics, data). Do not use icons as decoration; every icon must reinforce meaning.
 - IMAGES: Use purposeful images for evidence, context or emotional pacing. Long documents should normally include an image-led/contextual visual every few pages when the subject supports it. Add specific image blocks so the renderer can create or accept a replacement image. Never invent a factual photograph.
@@ -430,7 +464,7 @@ async function generatePlannedPage(options,project,item,index,total,onProgress){
     const source=relevantSourceContext(options,item,index,total,sourceMax);
     const knowledge=relevantKnowledgeContext(options,item,attempt===1?12000:7000);
     const conservative=attempt>1?`\nRECOVERY PASS ${attempt}: Keep the page response compact. Prefer fewer, complete blocks over long prose. Never truncate a string, table cell, list item or JSON field. Preserve all critical source facts assigned to this page.`:'';
-    const input=`Generate exactly ONE ${options.type==='presentation'?'slide':options.type==='graphic'?'graphic canvas':'designed document page/section'} as item ${index+1} of ${total}. This request is deliberately page-scoped: never return the full project.\n\nPLANNED PAGE:\nTitle: ${item?.title||`Page ${index+1}`}\nRole: ${item?.role||'narrative'}\nRequired layout: ${item?.layout||'editorial'}\nVisual treatment: ${item?.visualTreatment||'Use the design intelligence rules'}\nPurpose: ${item?.purpose||''}\n\nPROJECT TITLE: ${project.title}\nPROJECT SUMMARY/STRATEGY: ${project.summary}\nRECENT COMPLETED PAGES (avoid repetition and maintain continuity):\n${JSON.stringify(prior)}\n\n${globalRules}\n\n${source?`AUTHORITATIVE SOURCE EXCERPTS FOR THIS PAGE:\n${source}\n`:''}${knowledge?`\nRELEVANT RECYKAL KNOWLEDGE CONTEXT:\n${knowledge}\n`:''}${conservative}\n\nPAGE-SCOPED RULES:\n- Return one page and its sources only.\n- Follow the planned role/layout unless source fidelity makes a small safe adjustment necessary.\n- Do not duplicate prior-page content.\n- If this page contains a source table, preserve its cells and units; use a table block.\n- If content is sequential/chronological/comparative, use process/timeline/comparison structure rather than plain paragraphs.\n- For image needs, create image blocks with specific imagePrompt and altText, not fake URLs.\n- Never invent metrics, citations, quotations, people, dates or product claims.\n- Keep body copy readable; use columns or additional pages rather than tiny type. A document page must fit an A4 portrait sheet with no vertical growth or overflow; continue onto another page when needed.\n- Do not put the Recykal logo into page content; the master renderer handles the logo on the cover only.`;
+    const input=`Generate exactly ONE ${options.type==='presentation'?'slide':options.type==='graphic'?'graphic canvas':'designed document page/section'} as item ${index+1} of ${total}. This request is deliberately page-scoped: never return the full project.\n\nPLANNED PAGE:\nTitle: ${item?.title||`Page ${index+1}`}\nRole: ${item?.role||'narrative'}\nRequired layout: ${item?.layout||'editorial'}\nVisual treatment: ${item?.visualTreatment||'Use the design intelligence rules'}\nPurpose: ${item?.purpose||''}\n\nPROJECT TITLE: ${project.title}\nPROJECT SUMMARY/STRATEGY: ${project.summary}\nRECENT COMPLETED PAGES (avoid repetition and maintain continuity):\n${JSON.stringify(prior)}\n\n${globalRules}\n\n${source?`AUTHORITATIVE SOURCE EXCERPTS FOR THIS PAGE:\n${source}\n`:''}${knowledge?`\nRELEVANT RECYKAL KNOWLEDGE CONTEXT:\n${knowledge}\n`:''}${conservative}\n\nPAGE-SCOPED RULES:\n- Return one page and its sources only.\n- Follow the planned role/layout unless source fidelity makes a small safe adjustment necessary.\n- Do not duplicate prior-page content.\n- If this page contains a source table, preserve its cells and units; use a table block.\n- If content is sequential/chronological/comparative, use process/timeline/comparison structure rather than plain paragraphs.\n- For image needs, create image blocks with specific imagePrompt and altText, not fake URLs.\n- Never invent metrics, citations, quotations, people, dates or product claims.\n- Keep body copy readable; use columns or additional pages rather than tiny type. For A4 long-form, use a role-led scale: page H1 about 20–28 pt, H2 14–18 pt, H3 11–14 pt, lead 11–13 pt, body 9.5–10.5 pt, captions/tables 7.5–9 pt. Keep body leading roughly 1.35–1.5× and sustained line length around 50–75 characters. A document page must fit an A4 portrait sheet with no vertical growth or overflow; continue onto another page when needed.\n- Do not put the Recykal logo into page content; the master renderer handles the logo on the cover only.`;
     try{
       const raw=await structuredResponse({name:'recykal_incremental_page',schema:generatedPageResultSchema,research:allowResearch,input,maxOutputTokens:attempt===1?12000:8000,attempts:1});
       if(!raw?.page)throw new Error('Studio AI returned no page.');
@@ -487,7 +521,7 @@ ${JSON.stringify(original)}${src?`
 
 AUTHORITATIVE SOURCE EXCERPT:
 ${src}`:''}`});
-        if(revised){const repaired=normalizePage({...revised,id:original.id,title:revised.title||original.title});const pos=project.pages.findIndex(p=>p.id===original.id);if(pos>=0)project.pages[pos]=repaired;project=applyLayoutIntelligence(project);if(onProgress)await onProgress({stage:'revision',attempt:1,pageIndex,project,applied:true});}
+        if(revised){const repaired=inheritPageFormatting(original,normalizePage({...revised,id:original.id,title:revised.title||original.title}));const pos=project.pages.findIndex(p=>p.id===original.id);if(pos>=0)project.pages[pos]=repaired;project=applyLayoutIntelligence(project);if(onProgress)await onProgress({stage:'revision',attempt:1,pageIndex,project,applied:true});}
       }catch{}
     }
     project.qc=await qualityControlProject(project,{parsedFile:options.parsedFile});if(onProgress)await onProgress({stage:'qc',qc:project.qc,project});
@@ -498,7 +532,7 @@ ${src}`:''}`});
       const source=options.parsedFile?.text?options.parsedFile.text.slice(0,180000):'';
       const revised=await structuredResponse({name:'recykal_design_project_revision',schema:projectSchema,research:false,input:`Revise this project to resolve every blocking defect and materially improve the failed QC categories. Preserve factual meaning and source fidelity. Do not add unsupported facts.\n\nQC REVIEW:\n${JSON.stringify(project.qc)}\n\nCURRENT PROJECT:\n${JSON.stringify(project)}${source?`\n\nSOURCE EXCERPT (authoritative where content mode requires preservation):\n${source}`:''}`});
       if(!revised)break;
-      project=normalizeProject(revised,{...project,id:project.id,type:project.type,sourceFile:project.sourceFile,inputMode:project.inputMode,contentMode:project.contentMode,settings:project.settings,createdAt:project.createdAt});
+      project=inheritProjectFormatting(project,normalizeProject(revised,{...project,id:project.id,type:project.type,sourceFile:project.sourceFile,inputMode:project.inputMode,contentMode:project.contentMode,settings:project.settings,createdAt:project.createdAt}));
       project=applyLayoutIntelligence(project);project.qc=await qualityControlProject(project,{parsedFile:options.parsedFile});if(onProgress)await onProgress({stage:'revision',attempt:attempt+1,qc:project.qc,project,applied:true});
     }
   }
@@ -609,7 +643,7 @@ export async function editWithAI({ project, pageId, blockId, action, instruction
       name:'recykal_design_page', schema:pageSchema, research:false,
       input:`Project type: ${project.type}\nStyle: ${project.settings?.deckStyle||'auto'}; theme=${project.settings?.themeId||'recykal-core'}; project palette=${(project.settings?.projectPalette||[]).join(', ')||'default Recykal theme'}; image source=${project.settings?.imageSource||'mixed'}; art style=${project.settings?.artStyleId||'auto'}\nPage JSON: ${JSON.stringify(page)}\nAction: ${action}\nUser instruction: ${instruction||''}\nReturn an improved replacement page. Preserve all factual claims unless the user explicitly requests content changes. Apply the Design Intelligence Knowledge Base: fix hierarchy, proximity, spacing, long-form rhythm, chart/image purpose, accessibility and production risks; do not merely decorate.`
     });
-    return { kind:'page', value: raw ? normalizePage(raw) : page };
+    return { kind:'page', value: raw ? inheritPageFormatting(page,normalizePage(raw)) : page };
   }
   if (!block) throw new Error('Select a text block first.');
   const ai = client();
@@ -644,7 +678,7 @@ export async function reflowProject(project, deckStyle='auto', themeId=null) {
     input:`Recompose this existing ${project.type} project using STYLE: ${deck.name}. ${deck.rules}\nTHEME: ${theme.name}. ${theme.description}\nPROJECT PALETTE: ${(project.settings?.projectPalette||[]).join(', ')||'Use selected Recykal theme palette.'}\n\nNON-NEGOTIABLE: preserve every factual claim, number, date, name, table cell, chart datum, citation and source. Do not invent content. Keep the same overall narrative meaning. Improve layout choice, column use, page rhythm and visual hierarchy. Logo belongs on the first/cover page only unless a project master explicitly asks otherwise. Return the complete replacement project JSON.\n\nPROJECT:\n${JSON.stringify(project)}`
   });
   if(!revised) return project;
-  const next=normalizeProject(revised,{...project,id:project.id,type:project.type,sourceFile:project.sourceFile,inputMode:project.inputMode,contentMode:project.contentMode,settings:{...project.settings,deckStyle:style},createdAt:project.createdAt});
+  const next=inheritProjectFormatting(project,normalizeProject(revised,{...project,id:project.id,type:project.type,sourceFile:project.sourceFile,inputMode:project.inputMode,contentMode:project.contentMode,settings:{...project.settings,deckStyle:style},createdAt:project.createdAt}));
   next.qc={...(project.qc||{}),stale:true};
   return applyLayoutIntelligence(next);
 }
@@ -658,7 +692,7 @@ export async function generateOutline(options){
 export async function generatePageVariations(project,pageId){
   const page=project.pages.find(p=>p.id===pageId); if(!page)throw new Error('Page not found.');
   const raw=await structuredResponse({name:'recykal_page_variations',schema:variationsSchema,research:false,input:`Create exactly THREE distinct design variations for this page. Preserve every factual claim, number, table cell, chart datum and source. Each variation must use the same content meaning but explore a genuinely different composition. Respect project style=${project.settings?.deckStyle||'auto'}, theme=${project.settings?.themeId||'recykal-core'}, projectPalette=${(project.settings?.projectPalette||[]).join(', ')||'default Recykal theme'}, imageSource=${project.settings?.imageSource||'mixed'}, artStyle=${project.settings?.artStyleId||'auto'}.\nVariation 1: editorial/clear. Variation 2: more visual/synthesis-led. Variation 3: more analytical/structured. Do not simply reorder identical blocks.\n\nPAGE:\n${JSON.stringify(page)}`});
-  return (raw?.variations||[]).map(normalizePage);
+  return (raw?.variations||[]).map(v=>inheritPageFormatting(page,normalizePage(v)));
 }
 
 export async function repurposeProject(project,targetType){
@@ -709,7 +743,7 @@ export async function localizeProject(project,{language='English (India)',locale
   if(!ai){const next=structuredClone(project);next.settings={...(next.settings||{}),language,locale};next.qc={...(next.qc||{}),stale:true};return next}
   const raw=await structuredResponse({name:'recykal_localized_project',schema:projectSchema,research:false,input:`${localizationInstruction}\n\nPROJECT:\n${JSON.stringify(project)}`});
   if(!raw)return project;
-  const next=normalizeProject(raw,{...project,id:project.id,type:project.type,sourceFile:project.sourceFile,inputMode:project.inputMode,contentMode:project.contentMode,settings:{...project.settings,language,locale},createdAt:project.createdAt});
+  const next=inheritProjectFormatting(project,normalizeProject(raw,{...project,id:project.id,type:project.type,sourceFile:project.sourceFile,inputMode:project.inputMode,contentMode:project.contentMode,settings:{...project.settings,language,locale},createdAt:project.createdAt}));
   // restore stable ids by page/block position when the model cannot preserve them in strict schema
   next.pages.forEach((p,i)=>{if(project.pages?.[i]){p.id=project.pages[i].id;p.blocks.forEach((b,j)=>{if(project.pages[i].blocks?.[j])b.id=project.pages[i].blocks[j].id})}});
   next.qc={...(project.qc||{}),stale:true};return applyLayoutIntelligence(next);

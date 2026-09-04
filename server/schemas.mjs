@@ -43,7 +43,7 @@ export const projectSchema = {
                 altText: { type: 'string' },
                 chartType: { type: 'string', enum:['bar','dot','line','scatter','table'] },
                 tableHeaders: { type:'array', items:{type:'string'} },
-                tableRows: { type:'array', items:{type:'array', items:{type:'string'} } }
+                tableRows: { type:'array', items:{type:'array', items:{type:'string'} } },
               }
             }
           },

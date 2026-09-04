@@ -13,6 +13,11 @@ export const DESIGN_KNOWLEDGE = {
     a4:'6 columns', editorial:'6 or 12 columns', desktop:'12 columns', mobile:'4 columns', presentation:'modular grid', social:'modular grid'
   },
   spacing:[4,8,12,16,24,32,40,48,64],
+  typographyScale:{
+    documentA4:{display:[32,42],h1:[20,28],h2:[14,18],h3:[11,14],lead:[11,13],body:[9.5,10.5],caption:[7.5,8.5],table:[7.5,9],footnote:[7,8]},
+    lineLength:{preferred:[50,75],maximum:80},
+    leading:{body:[1.35,1.5],dense:[1.3,1.42],wide:[1.45,1.6]}
+  },
   wcag: { normalTextContrast:4.5, largeTextContrast:3, minimumPointerTarget:24, resizePercent:200 },
   longformRhythm:['Opening','Orientation','Context','Evidence','Interpretation','Pause','Insight','Application','Resolution'],
   researchStructure:['Title & abstract','Research question','Context / literature','Methodology','Findings','Analysis / discussion','Limitations','Conclusion','References / appendices'],
@@ -61,8 +66,11 @@ GRID & SPACING
 TYPOGRAPHY
 - Treat typography as information architecture: Display, H1, H2, H3, Lead, Body, Caption, Data, Footnote.
 - One focal display statement at a time. Maintain obvious heading levels.
-- Sustained body reading should generally target roughly 50–75 characters per line.
-- Line spacing must respond to line length, size, x-height and weight.
+- Sustained body reading should generally target roughly 50–75 characters per line; avoid exceeding about 80 characters in normal reading columns.
+- A4 long-form defaults are role-led, not arbitrary: Display ~32–42 pt; page H1 ~20–28 pt; H2 ~14–18 pt; H3 ~11–14 pt; lead ~11–13 pt; body ~9.5–10.5 pt; captions/tables ~7.5–9 pt; footnotes ~7–8 pt. These are starting ranges, not permission to shrink content to fit.
+- Body leading should normally sit around 1.35–1.5× the type size; wider lines need more leading. Use a consistent baseline/vertical rhythm across adjacent columns.
+- When content does not fit, reflow, paginate, restructure, or split a table. Never solve overflow by squeezing type below the readable role range.
+- User text-size overrides are allowed, but preserve the hierarchy relationship between heading, subheading, body, caption and data roles.
 - Never stretch/squeeze type. Limit typeface count; use size/weight/case/spacing before adding families.
 - Never literally label hierarchy as “Heading”, “Subheading” or “Body” in finished content unless those words are actual content.
 
@@ -110,6 +118,7 @@ Choose chart by analytical question:
 - Relationship: scatter plot; avoid unjustified dual-axis charts.
 - Exact lookup: table; avoid over-designed infographic charts.
 Integrity: zero baseline for bars unless a disclosed analytical reason; do not distort aspect ratio; label units/time/source/sample/context; direct-label when useful; highlight insight without hiding data.
+TABLES: Use one stable column grid for the full table. Size columns according to content rather than equal-width by default. Keep row heights content-driven. Use a clearly differentiated header row, repeat headers on continuation pages, align numeric data consistently (normally right/tabular), emphasize row labels when useful, and prefer whitespace + horizontal rules over boxing every cell. For very wide A4 tables, split columns into readable continuation groups while repeating the identifying first column instead of shrinking text to illegibility.
 
 IMAGES & VISUAL LANGUAGE
 Every image must have a reason: evidence, context, explanation, emotion or decoration. “The page looks empty” is not a reason.

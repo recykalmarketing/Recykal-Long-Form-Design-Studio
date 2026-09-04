@@ -225,3 +225,9 @@ Per current production scope, the Print PDF profile no longer generates bleed, T
 - **Remove wrong attachment:** Every attached source file has a remove action before generation. Removing one file keeps the remaining files and rebuilds the authoritative source aggregate; removing the last file resets the source attachment state.
 - **Optional project palette:** Users can paste/add up to 8 six-digit HEX colours. Leaving the palette empty uses the selected Recykal theme. A supplied project palette overrides project design accents/data/visual fields while the Recykal logo artwork, logo proportions and Poppins typography remain locked.
 - **Editable after generation:** The Visual System inspector exposes the same project-palette controls, so colours can be added/removed after generation and the project can then be recomposed without changing factual content.
+
+## v1.1.7 — Direct text editing and editorial tables
+
+The editor now supports Google Docs/Slides-style direct authoring for text blocks: inline copy editing, point-size controls, semantic type presets, bold/italic/underline, alignment, line spacing, text/highlight colours, clear formatting, and AI Shorten/Expand. Common keyboard shortcuts are supported. Manual formatting survives AI layout/reflow/localisation operations.
+
+The A4 renderer now uses an explicit long-form type scale and stronger table architecture: stable content-aware columns, structured row/cell editing, repeated headers, numeric alignment, first-column emphasis, multiple table styles/densities, and readable continuation groups for wide tables. See `docs/typography-and-table-system.md`.
