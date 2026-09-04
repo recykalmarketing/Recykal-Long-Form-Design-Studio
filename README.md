@@ -1,3 +1,9 @@
+# Long Form Design Studio - Recykal
+
+Release candidate **v1.2.1** adds source-faithful Preserve-mode allocation, removes the false A4 page-budget stop, strengthens source coverage QC, and fixes the repeated/under-filled PDF layouts found in the Goa DRS test.
+
+See `docs/v1.2.1-source-fidelity-layout-fix.md`.
+
 # Long Form Design Studio — Recykal
 
 ## v1.1.8 — Optional exact final document length
