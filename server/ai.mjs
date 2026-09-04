@@ -26,6 +26,15 @@ function normalizeTextStyle(style={}){
 function normalizeTableStyle(style={}){
   const out={variant:['clean','striped','ledger','minimal'].includes(style.variant)?style.variant:'clean',density:['comfortable','compact'].includes(style.density)?style.density:'comfortable',numericAlign:['left','center','right'].includes(style.numericAlign)?style.numericAlign:'right',firstColumnEmphasis:style.firstColumnEmphasis!==false,verticalRules:Boolean(style.verticalRules)};if(Array.isArray(style.columnWidths)&&style.columnWidths.length)out.columnWidths=style.columnWidths.map(Number).filter(x=>Number.isFinite(x)&&x>0).slice(0,20);return out;
 }
+function clamp(n,min,max,fallback=min){const v=Number(n);return Number.isFinite(v)?Math.max(min,Math.min(max,v)):fallback;}
+function normalizeFrame(frame={}){
+  if(!frame||typeof frame!=='object')return {freeform:false};
+  return {freeform:Boolean(frame.freeform),x:clamp(frame.x,0,96,6),y:clamp(frame.y,0,96,12),w:clamp(frame.w,4,100,88),h:frame.autoHeight!==false?clamp(frame.h,4,100,18):clamp(frame.h,4,100,18),autoHeight:frame.autoHeight!==false,z:Math.round(clamp(frame.z,0,100,1))};
+}
+function normalizeSurface(surface={}){
+  const modes=new Set(['plain','top-band','side-panel','data-band','quote-panel','split-tint','chapter-field','dark','soft-grid']);
+  return {mode:modes.has(surface?.mode)?surface.mode:'plain',role:['primary','secondary','accent','dark','surface'].includes(surface?.role)?surface.role:'surface',intensity:clamp(surface?.intensity,0,1,.12)};
+}
 
 function normalizeBlock(block={}) {
   return {
@@ -49,7 +58,8 @@ function normalizeBlock(block={}) {
     provenance: block.provenance || null,
     imageVariations: Array.isArray(block.imageVariations) ? block.imageVariations : [],
     style: normalizeTextStyle(block.style||{}),
-    tableStyle: normalizeTableStyle(block.tableStyle||{})
+    tableStyle: normalizeTableStyle(block.tableStyle||{}),
+    frame: normalizeFrame(block.frame||{})
   };
 }
 
@@ -62,7 +72,8 @@ function normalizePage(page={}) {
     speakerNotes: page.speakerNotes || '',
     locked: Boolean(page.locked),
     continuationBatchId: page.continuationBatchId || null,
-    continuationBatchNumber: Number.isFinite(Number(page.continuationBatchNumber)) ? Number(page.continuationBatchNumber) : null
+    continuationBatchNumber: Number.isFinite(Number(page.continuationBatchNumber)) ? Number(page.continuationBatchNumber) : null,
+    surface: normalizeSurface(page.surface||{})
   };
 }
 
@@ -71,6 +82,7 @@ function inheritManualBlockFormatting(sourceBlock,targetBlock){
   const next={...targetBlock};
   if(sourceBlock.style&&Object.keys(sourceBlock.style).length)next.style=normalizeTextStyle(sourceBlock.style);
   if(sourceBlock.tableStyle&&Object.keys(sourceBlock.tableStyle).length)next.tableStyle=normalizeTableStyle(sourceBlock.tableStyle);
+  if(sourceBlock.frame&&sourceBlock.frame.freeform)next.frame=normalizeFrame(sourceBlock.frame);
   return next;
 }
 function inheritPageFormatting(sourcePage,targetPage){
@@ -223,6 +235,21 @@ export function enforceA4DocumentPages(project){
   }
   const out=[];for(const p of project.pages||[])out.push(...splitPageToA4(p));project.pages=out;project.settings={...(project.settings||{}),pageFormat:'A4',pageOrientation:'portrait',fixedPageSize:true};return project;
 }
+function inferSurfaceTreatment(page={},index=0,total=1){
+  if(page.surface?.mode&&page.surface.mode!=='plain')return normalizeSurface(page.surface);
+  const layout=page.layout||'editorial';const title=String(page.title||'').toLowerCase();
+  if(layout==='cover')return {mode:'chapter-field',role:'secondary',intensity:.16};
+  if(layout==='closing')return {mode:'dark',role:'dark',intensity:1};
+  if(layout==='stat')return {mode:'data-band',role:index%2?'secondary':'primary',intensity:.11};
+  if(layout==='quote')return {mode:'quote-panel',role:'accent',intensity:.10};
+  if(layout==='image-led')return {mode:'split-tint',role:'surface',intensity:.18};
+  if(layout==='timeline'||layout==='process')return {mode:'side-panel',role:layout==='timeline'?'primary':'secondary',intensity:.08};
+  if(layout==='table'||layout==='chart')return {mode:'top-band',role:'surface',intensity:.22};
+  if(/chapter|section|part\s+\d|overview|preliminary|appendix/.test(title))return {mode:'chapter-field',role:index%2?'primary':'secondary',intensity:.09};
+  if(layout==='two-column'&&index%3===1)return {mode:'soft-grid',role:'surface',intensity:.08};
+  return {mode:'plain',role:'surface',intensity:0};
+}
+
 function applyLayoutIntelligence(project) {
   const allowed=new Set(['cover','editorial','two-column','stat','quote','timeline','comparison','process','table','chart','image-led','closing']);
   let prev=''; let run=0;
@@ -231,7 +258,8 @@ function applyLayoutIntelligence(project) {
     if(['editorial','two-column'].includes(layout)) layout=inferLayout({...p,layout},i,project.pages.length);
     if(layout===prev) run++; else {prev=layout;run=1;}
     if(project.type==='document' && run>=3 && ['editorial','two-column'].includes(layout)) { layout=layout==='editorial'?'two-column':'editorial'; prev=layout;run=1; }
-    return {...p,layout};
+    const withLayout={...p,layout};
+    return {...withLayout,surface:inferSurfaceTreatment(withLayout,i,project.pages.length)};
   });
   return enforceA4DocumentPages(project);
 }
@@ -446,7 +474,7 @@ function projectOptionsFromGeneration(options={}){
     sourceFile: options.parsedFile ? { filename:options.parsedFile.filename, kind:options.parsedFile.kind, metadata:options.parsedFile.metadata, assets:options.parsedFile.assets||[], uploadId:options.parsedFile.uploadId||null, extractionConfidence:options.parsedFile.extractionConfidence||options.parsedFile.metadata?.extractionConfidence||null } : null,
     inputMode: options.parsedFile ? 'file' : 'prompt',
     contentMode: options.contentMode,
-    settings:{ audience:options.audience, tone:options.tone, language:options.language, visualStyle:options.visualStyle, deckStyle:options.deckStyle||'auto', themeId:options.themeId||'recykal-core', projectPalette:normalizeProjectPalette(options.projectPalette), imageSource:options.imageSource||'mixed', artStyleId:options.artStyleId||'auto', customArtStyle:options.customArtStyle||'', imageVariations:Math.max(1,Math.min(3,Number(options.imageVariations)||1)), styleReferences:options.styleReferences||[], targetPageCount:normalizedTargetPageCount(options.targetPageCount,options.type), masterFields:{headerText:'',footerText:'',pageNumbers:true,logoMode:'cover-only'}, research:options.contentMode==='preserve'?false:Boolean(options.research), templateId:options.template?.id||null, templateName:options.template?.name||null, knowledgeIds:(options.knowledge||[]).map(k=>k.id), approvedAssets:(options.knowledge||[]).flatMap(k=>k.assets||[]).slice(0,60) }
+    settings:{ audience:options.audience, tone:options.tone, language:options.language, visualStyle:options.visualStyle, deckStyle:options.deckStyle||'auto', themeId:options.themeId||'recykal-core', projectPalette:normalizeProjectPalette(options.projectPalette), imageSource:options.imageSource||'mixed', artStyleId:options.artStyleId||'auto', customArtStyle:options.customArtStyle||'', imageVariations:Math.max(1,Math.min(3,Number(options.imageVariations)||1)), styleReferences:options.styleReferences||[], targetPageCount:normalizedTargetPageCount(options.targetPageCount,options.type), autoExpandPageTarget:options.autoExpandPageTarget!==false, masterFields:{headerText:'',footerText:'',pageNumbers:true,logoMode:'cover-only'}, research:options.contentMode==='preserve'?false:Boolean(options.research), templateId:options.template?.id||null, templateName:options.template?.name||null, knowledgeIds:(options.knowledge||[]).map(k=>k.id), approvedAssets:(options.knowledge||[]).flatMap(k=>k.assets||[]).slice(0,60) }
   };
 }
 
@@ -555,7 +583,7 @@ async function generatePlannedPage(options,project,item,index,total,onProgress){
     }
   }
   const message=exactTarget&&lastError?.code==='EXACT_PAGE_BUDGET'?`Page ${index+1} could not fit the exact ${exactTarget}-page A4 budget at a readable type size after 3 attempts. Increase the final page target or choose Condense mode; completed pages have been preserved.`:`Page ${index+1} could not be completed after 3 safe retries. Completed pages have been preserved so you can resume instead of starting over.`;
-  const error=new Error(message);error.cause=lastError;error.projectId=project.id;throw error;
+  const error=new Error(message);error.cause=lastError;error.code=lastError?.code||'PAGE_GENERATION_FAILED';error.projectId=project.id;throw error;
 }
 
 function streamedPagesFromJson(text='') {
@@ -578,7 +606,7 @@ async function finalizeGeneratedProject(data, options, {onProgress=null}={}) {
     type:options.type,
     sourceFile: options.parsedFile ? { filename:options.parsedFile.filename, kind:options.parsedFile.kind, metadata:options.parsedFile.metadata, assets:options.parsedFile.assets||[], uploadId:options.parsedFile.uploadId||null, extractionConfidence:options.parsedFile.extractionConfidence||options.parsedFile.metadata?.extractionConfidence||null } : null,
     inputMode: options.parsedFile ? 'file' : 'prompt', contentMode: options.contentMode,
-    settings:{ audience:options.audience, tone:options.tone, language:options.language, visualStyle:options.visualStyle, deckStyle:options.deckStyle||'auto', themeId:options.themeId||'recykal-core', projectPalette:normalizeProjectPalette(options.projectPalette), imageSource:options.imageSource||'mixed', artStyleId:options.artStyleId||'auto', customArtStyle:options.customArtStyle||'', imageVariations:Math.max(1,Math.min(3,Number(options.imageVariations)||1)), styleReferences:options.styleReferences||[], targetPageCount:normalizedTargetPageCount(options.targetPageCount,options.type), masterFields:{headerText:'',footerText:'',pageNumbers:true,logoMode:'cover-only'}, research:options.contentMode==='preserve'?false:Boolean(options.research), templateId:options.template?.id||null, templateName:options.template?.name||null, knowledgeIds:(options.knowledge||[]).map(k=>k.id), approvedAssets:(options.knowledge||[]).flatMap(k=>k.assets||[]).slice(0,60) }
+    settings:{ audience:options.audience, tone:options.tone, language:options.language, visualStyle:options.visualStyle, deckStyle:options.deckStyle||'auto', themeId:options.themeId||'recykal-core', projectPalette:normalizeProjectPalette(options.projectPalette), imageSource:options.imageSource||'mixed', artStyleId:options.artStyleId||'auto', customArtStyle:options.customArtStyle||'', imageVariations:Math.max(1,Math.min(3,Number(options.imageVariations)||1)), styleReferences:options.styleReferences||[], targetPageCount:normalizedTargetPageCount(options.targetPageCount,options.type), autoExpandPageTarget:options.autoExpandPageTarget!==false, masterFields:{headerText:'',footerText:'',pageNumbers:true,logoMode:'cover-only'}, research:options.contentMode==='preserve'?false:Boolean(options.research), templateId:options.template?.id||null, templateName:options.template?.name||null, knowledgeIds:(options.knowledge||[]).map(k=>k.id), approvedAssets:(options.knowledge||[]).flatMap(k=>k.assets||[]).slice(0,60) }
   });
   project=applyLayoutIntelligence(project); if(onProgress)await onProgress({stage:'layout',project});
   project.qc=await qualityControlProject(project,{parsedFile:options.parsedFile}); if(onProgress)await onProgress({stage:'qc',qc:project.qc,project});
@@ -626,49 +654,80 @@ export async function generateProjectStream(options, onProgress=async()=>{}) {
   const ai=client();
   if(!ai){const project=await finalizeGeneratedProject(demoProject(options),options,{onProgress});for(let i=0;i<project.pages.length;i++)await onProgress({stage:'page',index:i,total:project.pages.length,page:project.pages[i]});await onProgress({stage:'complete',project});return project;}
 
-  // Long-form generation is intentionally incremental. We never ask the model to emit
-  // one giant project JSON object because a truncated response would invalidate every page.
-  let planItems=Array.isArray(options.approvedOutline)&&options.approvedOutline.length?options.approvedOutline:null;
+  // Long-form generation is intentionally incremental. Each page is generated, validated,
+  // checkpointed and streamed independently. Exact targets can automatically expand when
+  // preserving readable A4 typography requires more physical pages.
+  let generationOptions={...options};
+  let planItems=Array.isArray(generationOptions.approvedOutline)&&generationOptions.approvedOutline.length?generationOptions.approvedOutline:null;
   let planTitle='';let planStrategy='';
   if(!planItems){
     await onProgress({stage:'starting',message:'Planning the narrative architecture…'});
-    const outline=await generateOutline(options);
+    const outline=await generateOutline(generationOptions);
     planItems=outline?.items||[];planTitle=outline?.title||'';planStrategy=outline?.strategy||'';
   }else{
-    planTitle=options.prompt||options.parsedFile?.filename||'Long Form Design Studio project';
+    planTitle=generationOptions.prompt||generationOptions.parsedFile?.filename||'Long Form Design Studio project';
     planStrategy='Approved design plan';
   }
-  const exactTarget=normalizedTargetPageCount(options.targetPageCount,options.type);
+  let exactTarget=normalizedTargetPageCount(generationOptions.targetPageCount,generationOptions.type);
   if(exactTarget)planItems=reconcileOutlineToTarget(planItems,exactTarget);
-  if(options.type==='graphic')planItems=planItems.slice(0,1);
+  if(generationOptions.type==='graphic')planItems=planItems.slice(0,1);
   if(!planItems.length)throw new Error('Studio AI could not create a usable design plan. Please adjust the brief and try again.');
 
-  const base=projectOptionsFromGeneration(options);
-  let project=normalizeProject({title:planTitle||options.prompt||options.parsedFile?.filename||'Untitled project',summary:planStrategy,pages:[],sources:[]},base);
-  project.generation={status:'running',completed:0,total:planItems.length,startedAt:new Date().toISOString(),lastError:'',plan:planItems};
+  const base=projectOptionsFromGeneration(generationOptions);
+  let project=normalizeProject({title:planTitle||generationOptions.prompt||generationOptions.parsedFile?.filename||'Untitled project',summary:planStrategy,pages:[],sources:[]},base);
+  project.generation={status:'running',completed:0,total:planItems.length,startedAt:new Date().toISOString(),lastError:'',plan:planItems,initialTargetPageCount:exactTarget||null,autoExpanded:false};
   await onProgress({stage:'accepted',projectId:project.id,total:planItems.length,message:'Page-safe generation started.'});
-  if(typeof options.checkpoint==='function')await options.checkpoint(project,{stage:'accepted'});
+  if(typeof generationOptions.checkpoint==='function')await generationOptions.checkpoint(project,{stage:'accepted'});
+
+  let expansionCount=0;
+  const nextExpandedTarget=(current,completed)=>Math.min(500,Math.max(current+10,Math.ceil(current*1.18),completed+8));
+  const replanForExpandedTarget=async(newTarget)=>{
+    const oldTarget=exactTarget;exactTarget=newTarget;generationOptions={...generationOptions,targetPageCount:newTarget};
+    const outline=await generateOutline(generationOptions);let revised=reconcileOutlineToTarget(outline?.items||[],newTarget);
+    if(!revised.length)throw new Error('Studio AI could not replan the unfinished publication after increasing the page target.');
+    const oldPlan=Array.isArray(project.generation?.plan)?project.generation.plan:planItems;
+    for(let j=0;j<project.pages.length;j++){
+      const pg=project.pages[j]||{};revised[j]={...(revised[j]||{}),...(oldPlan[j]||{}),title:pg.title||oldPlan[j]?.title||revised[j]?.title||`Page ${j+1}`,layout:pg.layout||oldPlan[j]?.layout||revised[j]?.layout||'editorial',role:oldPlan[j]?.role||revised[j]?.role||'completed',purpose:oldPlan[j]?.purpose||revised[j]?.purpose||'Already completed and preserved.',visualTreatment:oldPlan[j]?.visualTreatment||revised[j]?.visualTreatment||'Preserve completed page exactly.'};
+    }
+    planItems=revised;
+    project.settings={...(project.settings||{}),targetPageCount:newTarget,autoExpandPageTarget:true,pageFormat:'A4',pageOrientation:'portrait',fixedPageSize:true};
+    project.generation={...project.generation,total:newTarget,plan:planItems,autoExpanded:true,previousTargetPageCount:oldTarget,targetPageCount:newTarget,expansionCount};
+    await onProgress({stage:'target-expanded',oldTarget,newTarget,total:newTarget,completed:project.pages.length,message:`Readable A4 layout needs more room. Studio increased the final target from ${oldTarget} to ${newTarget} pages and is continuing automatically.`});
+    if(typeof generationOptions.checkpoint==='function')await generationOptions.checkpoint(project,{stage:'target-expanded',oldTarget,newTarget});
+  };
 
   try{
     for(let i=0;i<planItems.length;i++){
-      await onProgress({stage:'page-start',index:i,total:planItems.length,message:`Building ${options.type==='presentation'?'slide':'page'} ${i+1} of ${planItems.length}…`});
-      const result=await generatePlannedPage(options,project,planItems[i],i,planItems.length,onProgress);
+      await onProgress({stage:'page-start',index:i,total:planItems.length,message:`Building ${generationOptions.type==='presentation'?'slide':'page'} ${i+1} of ${planItems.length}…`});
+      let result=null;
+      while(!result){
+        try{
+          result=await generatePlannedPage(generationOptions,project,planItems[i],i,planItems.length,onProgress);
+        }catch(err){
+          const canExpand=generationOptions.type==='document'&&exactTarget&&generationOptions.autoExpandPageTarget!==false&&err?.code==='EXACT_PAGE_BUDGET'&&exactTarget<500&&expansionCount<8;
+          if(!canExpand)throw err;
+          expansionCount++;
+          const proposed=nextExpandedTarget(exactTarget,project.pages.length);
+          if(proposed<=exactTarget)throw err;
+          await replanForExpandedTarget(proposed);
+          await onProgress({stage:'page-start',index:i,total:planItems.length,message:`Page ${i+1} is being recomposed against the expanded ${exactTarget}-page A4 budget…`});
+        }
+      }
       project.pages.push(result.page);project.sources=mergeSources(project.sources,result.sources);project=applyLayoutIntelligence(project);
-      project.generation={...project.generation,status:'running',completed:i+1,total:planItems.length,lastError:''};
-      if(typeof options.checkpoint==='function')await options.checkpoint(project,{stage:'page',index:i});
-      await onProgress({stage:'page',index:i,total:planItems.length,page:project.pages[i],projectId:project.id});
+      project.generation={...project.generation,status:'running',completed:i+1,total:planItems.length,lastError:'',plan:planItems};
+      if(typeof generationOptions.checkpoint==='function')await generationOptions.checkpoint(project,{stage:'page',index:i});
+      await onProgress({stage:'page',index:i,total:planItems.length,page:project.pages[i],projectId:project.id,targetPageCount:exactTarget,autoExpanded:Boolean(project.generation?.autoExpanded)});
     }
 
-    // Finalization can inspect the complete project, but it is not allowed to regenerate
-    // the whole project as a single huge JSON response. QC and visual materialization are separate passes.
-    const finalized=await finalizeGeneratedProject(project,{...options,incremental:true},{onProgress});
-    if(exactTarget&&finalized.pages.length!==exactTarget)throw new Error(`Exact page target integrity check failed: requested ${exactTarget} A4 pages but the project contains ${finalized.pages.length}. Completed pages are preserved; adjust the design plan or page target before final export.`);
-    finalized.generation={...project.generation,status:'complete',completed:finalized.pages.length,total:planItems.length,finishedAt:new Date().toISOString(),lastError:''};
-    if(typeof options.checkpoint==='function')await options.checkpoint(finalized,{stage:'complete'});
+    const finalized=await finalizeGeneratedProject(project,{...generationOptions,incremental:true},{onProgress});
+    if(exactTarget&&finalized.pages.length!==exactTarget)throw new Error(`Page target integrity check failed: current target is ${exactTarget} A4 pages but the project contains ${finalized.pages.length}. Completed pages are preserved; recompose before final export.`);
+    finalized.settings={...(finalized.settings||{}),targetPageCount:exactTarget||finalized.settings?.targetPageCount||null,autoExpandPageTarget:generationOptions.autoExpandPageTarget!==false};
+    finalized.generation={...project.generation,status:'complete',completed:finalized.pages.length,total:planItems.length,finishedAt:new Date().toISOString(),lastError:'',finalTargetPageCount:exactTarget||null};
+    if(typeof generationOptions.checkpoint==='function')await generationOptions.checkpoint(finalized,{stage:'complete'});
     await onProgress({stage:'complete',project:finalized});return finalized;
   }catch(err){
-    project.generation={...project.generation,status:'failed',completed:project.pages.length,total:planItems.length,lastError:err.message||'Generation failed',failedAt:new Date().toISOString()};
-    if(typeof options.checkpoint==='function')await options.checkpoint(project,{stage:'failed',error:err.message});
+    project.generation={...project.generation,status:'failed',completed:project.pages.length,total:planItems.length,lastError:err.message||'Generation failed',failedAt:new Date().toISOString(),finalTargetPageCount:exactTarget||null};
+    if(typeof generationOptions.checkpoint==='function')await generationOptions.checkpoint(project,{stage:'failed',error:err.message});
     err.projectId=err.projectId||project.id;err.completedPages=project.pages.length;err.totalPages=planItems.length;throw err;
   }
 }
@@ -677,6 +736,91 @@ export async function generateProject(options) {
   // Non-streaming callers use the same page-scoped engine. This keeps API/automation
   // generation safe for long documents instead of reverting to one giant JSON response.
   return generateProjectStream(options,async()=>{});
+}
+
+export async function resumeProjectStream(existingProject, options={}, onProgress=async()=>{}) {
+  if(existingProject?.type!=='document')throw new Error('Only document projects can resume an interrupted exact-page generation.');
+  const completed=(existingProject.pages||[]).length;
+  const exactTarget=normalizedTargetPageCount(options.targetPageCount,'document');
+  if(!exactTarget)throw new Error('Choose a new exact final page target before resuming.');
+  if(exactTarget<=completed)throw new Error(`The new final page target must be greater than the ${completed} pages already completed.`);
+
+  const s=existingProject.settings||{};
+  const generationOptions={
+    type:'document',
+    prompt:options.prompt||`Resume the interrupted generation for "${existingProject.title}". Rebalance the remaining source across the new exact ${exactTarget}-page A4 target while preserving the already completed pages.`,
+    parsedFile:options.parsedFile||null,
+    contentMode:options.contentMode||existingProject.contentMode||'preserve',
+    audience:s.audience||'Recykal marketing stakeholders',
+    tone:s.tone||'Professional, confident and precise',
+    language:s.language||'English (India)',
+    visualStyle:s.visualStyle||'Premium editorial, clear and contemporary',
+    deckStyle:s.deckStyle||'auto',
+    themeId:s.themeId||'recykal-core',
+    projectPalette:s.projectPalette||[],
+    imageSource:s.imageSource||'mixed',
+    artStyleId:s.artStyleId||'auto',
+    customArtStyle:s.customArtStyle||'',
+    imageVariations:s.imageVariations||1,
+    styleReferences:s.styleReferences||[],
+    targetPageCount:exactTarget,
+    research:existingProject.contentMode==='preserve'?false:Boolean(s.research),
+    template:options.template||null,
+    knowledge:options.knowledge||[],
+    signal:options.signal,
+    checkpoint:options.checkpoint
+  };
+
+  await onProgress({stage:'starting',message:`Replanning the unfinished publication for ${exactTarget} A4 pages…`,completed,total:exactTarget});
+  const outline=await generateOutline(generationOptions);
+  let planItems=reconcileOutlineToTarget(outline?.items||[],exactTarget);
+  if(!planItems.length)throw new Error('Studio AI could not create a revised page plan for the new target.');
+
+  // Already-completed pages are immutable. Their plan slots are anchored to the real pages,
+  // while the unfinished remainder is rebalanced against the larger page target.
+  const oldPlan=Array.isArray(existingProject.generation?.plan)?existingProject.generation.plan:[];
+  for(let i=0;i<completed;i++){
+    const page=existingProject.pages[i]||{};
+    planItems[i]={
+      ...(planItems[i]||{}),
+      ...(oldPlan[i]||{}),
+      title:page.title||oldPlan[i]?.title||planItems[i]?.title||`Page ${i+1}`,
+      layout:page.layout||oldPlan[i]?.layout||planItems[i]?.layout||'editorial',
+      role:oldPlan[i]?.role||planItems[i]?.role||'completed',
+      purpose:oldPlan[i]?.purpose||planItems[i]?.purpose||'Already completed and preserved.',
+      visualTreatment:oldPlan[i]?.visualTreatment||planItems[i]?.visualTreatment||'Preserve completed page exactly.'
+    };
+  }
+
+  let project=structuredClone(existingProject);
+  project.settings={...(project.settings||{}),targetPageCount:exactTarget,pageFormat:'A4',pageOrientation:'portrait',fixedPageSize:true};
+  project.generation={...(project.generation||{}),status:'running',completed,total:exactTarget,plan:planItems,resumedAt:new Date().toISOString(),lastError:'',resumeTarget:exactTarget};
+  project.qc={...(project.qc||{}),stale:true};
+  await onProgress({stage:'accepted',projectId:project.id,total:exactTarget,completed,message:`Target increased to ${exactTarget} pages. Resuming from page ${completed+1}.`});
+  if(typeof options.checkpoint==='function')await options.checkpoint(project,{stage:'resume-accepted',completed,target:exactTarget});
+
+  try{
+    for(let i=completed;i<planItems.length;i++){
+      await onProgress({stage:'page-start',index:i,total:planItems.length,message:`Building page ${i+1} of ${planItems.length}…`});
+      const result=await generatePlannedPage(generationOptions,project,planItems[i],i,planItems.length,onProgress);
+      project.pages.push(result.page);project.sources=mergeSources(project.sources,result.sources);project=applyLayoutIntelligence(project);
+      project.generation={...project.generation,status:'running',completed:i+1,total:planItems.length,lastError:''};
+      if(typeof options.checkpoint==='function')await options.checkpoint(project,{stage:'page',index:i,resumed:true});
+      await onProgress({stage:'page',index:i,total:planItems.length,page:project.pages[i],projectId:project.id,resumed:true});
+    }
+
+    const finalized=await finalizeGeneratedProject(project,{...generationOptions,incremental:true},{onProgress});
+    if(finalized.pages.length!==exactTarget)throw new Error(`Exact page target integrity check failed after resume: requested ${exactTarget} A4 pages but the project contains ${finalized.pages.length}.`);
+    finalized.settings={...(finalized.settings||{}),targetPageCount:exactTarget};
+    finalized.generation={...project.generation,status:'complete',completed:finalized.pages.length,total:exactTarget,finishedAt:new Date().toISOString(),lastError:'',resumeTarget:exactTarget};
+    if(typeof options.checkpoint==='function')await options.checkpoint(finalized,{stage:'resume-complete',target:exactTarget});
+    await onProgress({stage:'complete',project:finalized,resumed:true});
+    return finalized;
+  }catch(err){
+    project.generation={...project.generation,status:'failed',completed:project.pages.length,total:exactTarget,lastError:err.message||'Generation resume failed',failedAt:new Date().toISOString(),resumeTarget:exactTarget};
+    if(typeof options.checkpoint==='function')await options.checkpoint(project,{stage:'resume-failed',error:err.message,target:exactTarget});
+    err.projectId=project.id;err.completedPages=project.pages.length;err.totalPages=exactTarget;throw err;
+  }
 }
 
 

@@ -249,3 +249,10 @@ The A4 renderer now uses an explicit long-form type scale and stronger table arc
 ## Staged continuation of long publications
 
 Document projects can be extended later through **Add continuation batch**. Attach remaining source files, or reuse a selected page/slide range from the original source. New pages are appended page-by-page using the existing project as the Design DNA/style source, so typography, masters, palette, tables, visual language, A4 dimensions and numbering remain consistent. Existing pages are not regenerated. See `docs/continuation-batches.md`.
+
+## v1.1.10 — Increase page target & resume
+If an exact-page document stops because a planned page cannot fit the current readable A4 budget, the live-generation screen now offers **Increase final page target and resume**. Users can choose +10, +20, or enter a custom target (up to 500 pages). Completed pages remain untouched; the Studio replans only the unfinished remainder against the larger exact A4 target, checkpoints every resumed page to Postgres, and continues QC/export normally.
+
+## v1.2.0 — Professional Editing & Resilient Publishing
+
+This release adds automatic page-target expansion, review exports before QC, Recent Work Export/Delete actions, free-position/resize element frames, semantic non-repetitive page surfaces, export-aware positioned elements, and QC rules for manual frame overflow. See `docs/v1.2-product-spec.md` and `docs/v1.2-module-implementation.md` for the full product and engineering specification.

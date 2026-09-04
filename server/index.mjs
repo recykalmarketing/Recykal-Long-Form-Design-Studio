@@ -10,7 +10,7 @@ import path from 'node:path';
 import { v4 as uuid } from 'uuid';
 import sharp from 'sharp';
 import { parseUploadedFile } from './fileParsers.mjs';
-import { generateProject, generateProjectStream, generateNextPage, editWithAI, generateImage, qualityControlProject, reflowProject, generateOutline, generateContinuationOutline, appendProjectStream, buildDesignDNA, generatePageVariations, repurposeProject, analyzeImageFocalPoint, localizeProject, enforceA4DocumentPages } from './ai.mjs';
+import { generateProject, generateProjectStream, resumeProjectStream, generateNextPage, editWithAI, generateImage, qualityControlProject, reflowProject, generateOutline, generateContinuationOutline, appendProjectStream, buildDesignDNA, generatePageVariations, repurposeProject, analyzeImageFocalPoint, localizeProject, enforceA4DocumentPages } from './ai.mjs';
 import { listProjects, getProject, saveProject, deleteProject, listKnowledge, getKnowledge, saveKnowledge, deleteKnowledge, saveVersion, listVersions, getVersion, listComments, saveComment, patchComment, deleteComment, listUsers, upsertUser, patchUser, deactivateUser, createShareLink, getShareByHash, listShareLinks, revokeShareLink, recordShareEvent, projectAnalytics, createApiKey, listApiKeys, revokeApiKey, saveWebhook, listWebhooks, deleteWebhook, getBinaryAsset, saveSourceAggregate, getSourceAggregate, storageStatus } from './store.mjs';
 import { exportProject } from './exporters.mjs';
 import { preflightExport } from './preflight.mjs';
@@ -229,25 +229,25 @@ app.delete('/api/webhooks/:id',requireRole('admin'),async(req,res,next)=>{try{aw
 app.post('/api/outline',async(req,res,next)=>{
   try{
     await ensureDurableGenerationStorage();
-    const {type,prompt,uploadId,contentMode='generate',audience,tone,language,visualStyle,deckStyle='auto',themeId='recykal-core',projectPalette=[],imageSource='mixed',artStyleId='auto',customArtStyle='',imageVariations=1,styleReferences=[],targetPageCount=null,research=false,templateId,knowledgeIds=[]}=req.body||{};
+    const {type,prompt,uploadId,contentMode='generate',audience,tone,language,visualStyle,deckStyle='auto',themeId='recykal-core',projectPalette=[],imageSource='mixed',artStyleId='auto',customArtStyle='',imageVariations=1,styleReferences=[],targetPageCount=null,autoExpandPageTarget=true,research=false,templateId,knowledgeIds=[]}=req.body||{};
     if(!['presentation','document','graphic'].includes(type))return res.status(400).json({error:'Choose Presentation, Document, or Graphic.'});
     let parsedFile=await loadAggregate(uploadId);if(parsedFile){parsedFile=scopeAggregate(parsedFile,req.body?.sourceRanges);parsedFile.uploadId=uploadId;}if(!prompt?.trim()&&!parsedFile)return res.status(400).json({error:'Enter a brief or upload a source file.'});
     const knowledge=await getKnowledge(Array.isArray(knowledgeIds)?knowledgeIds.slice(0,12):[]);const template=getTemplate(templateId);
-    res.json(await generateOutline({type,prompt,parsedFile,contentMode,audience,tone,language,visualStyle,deckStyle,themeId,projectPalette,imageSource,artStyleId,customArtStyle,imageVariations,styleReferences,targetPageCount,research,template,knowledge}));
+    res.json(await generateOutline({type,prompt,parsedFile,contentMode,audience,tone,language,visualStyle,deckStyle,themeId,projectPalette,imageSource,artStyleId,customArtStyle,imageVariations,styleReferences,targetPageCount,autoExpandPageTarget,research,template,knowledge}));
   }catch(e){next(e)}
 });
 
 app.post('/api/generate',async(req,res,next)=>{
   try{
     await ensureDurableGenerationStorage();
-    const {type,prompt,uploadId,contentMode='generate',audience,tone,language,visualStyle,deckStyle='auto',themeId='recykal-core',projectPalette=[],imageSource='mixed',artStyleId='auto',customArtStyle='',imageVariations=1,styleReferences=[],targetPageCount=null,approvedOutline=null,research=false,templateId,knowledgeIds=[]}=req.body||{};
+    const {type,prompt,uploadId,contentMode='generate',audience,tone,language,visualStyle,deckStyle='auto',themeId='recykal-core',projectPalette=[],imageSource='mixed',artStyleId='auto',customArtStyle='',imageVariations=1,styleReferences=[],targetPageCount=null,autoExpandPageTarget=true,approvedOutline=null,research=false,templateId,knowledgeIds=[]}=req.body||{};
     if(!['presentation','document','graphic'].includes(type)) return res.status(400).json({error:'Choose Presentation, Document, or Graphic.'});
     let parsedFile=await loadAggregate(uploadId);
     if(parsedFile){parsedFile=scopeAggregate(parsedFile,req.body?.sourceRanges);parsedFile.uploadId=uploadId;}
     if(!prompt?.trim() && !parsedFile) return res.status(400).json({error:'Enter a brief or upload a source file.'});
     const knowledge=await getKnowledge(Array.isArray(knowledgeIds)?knowledgeIds.slice(0,12):[]);
     const template=getTemplate(templateId);
-    const project=await generateProject({type,prompt,parsedFile,contentMode,audience,tone,language,visualStyle,deckStyle,themeId,projectPalette,imageSource,artStyleId,customArtStyle,imageVariations,styleReferences,targetPageCount,approvedOutline,research,template,knowledge});
+    const project=await generateProject({type,prompt,parsedFile,contentMode,audience,tone,language,visualStyle,deckStyle,themeId,projectPalette,imageSource,artStyleId,customArtStyle,imageVariations,styleReferences,targetPageCount,autoExpandPageTarget,approvedOutline,research,template,knowledge});
     await saveProject(project);await saveVersion(project,'Initial generation');broadcast(project.id,{type:'project-updated',project,reason:'initial-generation'});dispatchWebhook('project.created',{projectId:project.id,title:project.title,type:project.type});
     res.json(project);
   }catch(e){next(e)}
@@ -262,7 +262,7 @@ app.post('/api/generate-stream',async(req,res,next)=>{
   const heartbeat=setInterval(()=>send({stage:'heartbeat'}),12000);heartbeat.unref?.();
   const generationController=new AbortController();res.on('close',()=>{clearInterval(heartbeat);if(!res.writableEnded)generationController.abort()});
   try{
-    const {type,prompt,uploadId,contentMode='generate',audience,tone,language,visualStyle,deckStyle='auto',themeId='recykal-core',projectPalette=[],imageSource='mixed',artStyleId='auto',customArtStyle='',imageVariations=1,styleReferences=[],targetPageCount=null,approvedOutline=null,research=false,templateId,knowledgeIds=[]}=req.body||{};
+    const {type,prompt,uploadId,contentMode='generate',audience,tone,language,visualStyle,deckStyle='auto',themeId='recykal-core',projectPalette=[],imageSource='mixed',artStyleId='auto',customArtStyle='',imageVariations=1,styleReferences=[],targetPageCount=null,autoExpandPageTarget=true,approvedOutline=null,research=false,templateId,knowledgeIds=[]}=req.body||{};
     if(!['presentation','document','graphic'].includes(type)){send({stage:'error',error:'Choose a valid type.'});return res.end()}
     let parsedFile=null;if(uploadId){parsedFile=await loadAggregate(uploadId);if(!parsedFile){send({stage:'error',error:'Uploaded source is no longer available. Upload it again.'});return res.end()}parsedFile=scopeAggregate(parsedFile,req.body?.sourceRanges);parsedFile.uploadId=uploadId;}
     const knowledge=await getKnowledge(Array.isArray(knowledgeIds)?knowledgeIds.slice(0,12):[]);const template=getTemplate(templateId);
@@ -271,7 +271,7 @@ app.post('/api/generate-stream',async(req,res,next)=>{
       await saveProject(partial);
       if(meta.stage==='page')broadcast(partial.id,{type:'project-updated',project:partial,reason:'generation-checkpoint'});
     };
-    const project=await generateProjectStream({type,prompt,parsedFile,contentMode,audience,tone,language,visualStyle,deckStyle,themeId,projectPalette,imageSource,artStyleId,customArtStyle,imageVariations,styleReferences,targetPageCount,approvedOutline,research,template,knowledge,signal:generationController.signal,checkpoint},async event=>send(event));
+    const project=await generateProjectStream({type,prompt,parsedFile,contentMode,audience,tone,language,visualStyle,deckStyle,themeId,projectPalette,imageSource,artStyleId,customArtStyle,imageVariations,styleReferences,targetPageCount,autoExpandPageTarget,approvedOutline,research,template,knowledge,signal:generationController.signal,checkpoint},async event=>send(event));
     await saveProject(project);await saveVersion(project,'Initial progressive generation');dispatchWebhook('project.created',{projectId:project.id,title:project.title,type:project.type,source:'studio-progressive'});broadcast(project.id,{type:'project-created',project});
     send({stage:'saved',project});clearInterval(heartbeat);res.end();
   }catch(e){console.error(e);clearInterval(heartbeat);const raw=String(e?.message||'Generation failed.');const safe=/unterminated|string in json|unexpected end of json/i.test(raw)?'One page returned incomplete structured data. Studio AI could not recover it after safe retries. Completed pages were preserved.':raw;send({stage:'error',error:safe,projectId:e.projectId||null,completedPages:Number(e.completedPages||0),totalPages:Number(e.totalPages||0)});res.end();}
@@ -281,7 +281,37 @@ app.post('/api/generate-stream',async(req,res,next)=>{
 // Stable automation API. API keys can use Authorization: Bearer lfs_... with granular scopes.
 app.get('/api/v1/projects',requireScope('read'),async(req,res,next)=>{try{res.json({data:await listProjects()})}catch(e){next(e)}});
 app.get('/api/v1/projects/:id',requireScope('read'),async(req,res,next)=>{try{const p=await getProject(req.params.id);if(!p)return res.status(404).json({error:'Project not found.'});res.json({data:p})}catch(e){next(e)}});
-app.post('/api/v1/generate',requireScope('write'),async(req,res,next)=>{try{await ensureDurableGenerationStorage();const {type,prompt,contentMode='generate',audience,tone,language,visualStyle,deckStyle='auto',themeId='recykal-core',projectPalette=[],imageSource='mixed',artStyleId='auto',customArtStyle='',imageVariations=1,targetPageCount=null,research=false,templateId,knowledgeIds=[]}=req.body||{};if(!['presentation','document','graphic'].includes(type))return res.status(400).json({error:'Choose a valid type.'});if(!String(prompt||'').trim())return res.status(400).json({error:'prompt is required for the public API.'});const knowledge=await getKnowledge(Array.isArray(knowledgeIds)?knowledgeIds.slice(0,12):[]);const template=getTemplate(templateId);const project=await generateProject({type,prompt,contentMode,audience,tone,language,visualStyle,deckStyle,themeId,projectPalette,imageSource,artStyleId,customArtStyle,imageVariations,targetPageCount,research,template,knowledge});await saveProject(project);await saveVersion(project,'API generation');dispatchWebhook('project.created',{projectId:project.id,title:project.title,type:project.type,source:'public-api'});res.status(201).json({data:project})}catch(e){next(e)}});
+app.post('/api/projects/:id/resume-generation-stream',async(req,res,next)=>{
+  res.setHeader('Content-Type','application/x-ndjson; charset=utf-8');
+  res.setHeader('Cache-Control','no-cache, no-transform');
+  res.setHeader('X-Accel-Buffering','no');
+  res.flushHeaders?.();
+  const send=(event)=>{if(!res.writableEnded&&!res.destroyed)res.write(JSON.stringify({...event,at:new Date().toISOString()})+'\n')};
+  const heartbeat=setInterval(()=>send({stage:'heartbeat'}),12000);heartbeat.unref?.();
+  const generationController=new AbortController();res.on('close',()=>{clearInterval(heartbeat);if(!res.writableEnded)generationController.abort()});
+  try{
+    await ensureDurableGenerationStorage();
+    const project=await getProject(req.params.id);if(!project){send({stage:'error',error:'Project not found.'});clearInterval(heartbeat);return res.end()}
+    if(project.type!=='document'){send({stage:'error',error:'Only document projects can resume an interrupted exact-page generation.'});clearInterval(heartbeat);return res.end()}
+    const targetPageCount=Math.max(1,Math.min(500,Math.floor(Number(req.body?.targetPageCount)||0)));
+    if(!targetPageCount){send({stage:'error',error:'Choose a new final page target.'});clearInterval(heartbeat);return res.end()}
+    if(targetPageCount<=(project.pages||[]).length){send({stage:'error',error:`Choose a final page target greater than the ${(project.pages||[]).length} completed pages.`});clearInterval(heartbeat);return res.end()}
+
+    let parsedFile=await loadCombinedProjectSource(project);
+    const ranges=project.sourceFile?.metadata?.sourceRanges||project.sourceFile?.metadata?.sourceSelection||[];
+    if(parsedFile&&Array.isArray(ranges)&&ranges.length)parsedFile=scopeAggregate(parsedFile,ranges);
+    const settings=project.settings||{};
+    const template=getTemplate(settings.templateId);
+    const knowledge=await getKnowledge(Array.isArray(settings.knowledgeIds)?settings.knowledgeIds.slice(0,12):[]);
+    await saveVersion(project,`Before increasing page target to ${targetPageCount}`);
+    const checkpoint=async(partial,meta={})=>{await saveProject(partial);if(meta.stage==='page'||meta.stage==='resume-accepted')broadcast(partial.id,{type:'project-updated',project:partial,reason:'generation-resume-checkpoint'});};
+    const resumed=await resumeProjectStream(project,{targetPageCount,parsedFile,template,knowledge,signal:generationController.signal,checkpoint},async ev=>send(ev));
+    await saveProject(resumed);await saveVersion(resumed,`Generation resumed to ${targetPageCount} pages`);broadcast(resumed.id,{type:'project-updated',project:resumed,reason:'generation-resumed'});dispatchWebhook('project.updated',{projectId:resumed.id,title:resumed.title,type:resumed.type,source:'target-resume'});
+    send({stage:'saved',project:resumed,resumed:true});clearInterval(heartbeat);res.end();
+  }catch(e){console.error(e);clearInterval(heartbeat);const raw=String(e?.message||'Generation resume failed.');const safe=/unterminated|string in json|unexpected end of json/i.test(raw)?'One resumed page returned incomplete structured data. Completed pages remain saved.':raw;send({stage:'error',error:safe,projectId:e.projectId||req.params.id,completedPages:Number(e.completedPages||0),totalPages:Number(e.totalPages||0),recoverable:true});res.end();}
+});
+
+app.post('/api/v1/generate',requireScope('write'),async(req,res,next)=>{try{await ensureDurableGenerationStorage();const {type,prompt,contentMode='generate',audience,tone,language,visualStyle,deckStyle='auto',themeId='recykal-core',projectPalette=[],imageSource='mixed',artStyleId='auto',customArtStyle='',imageVariations=1,targetPageCount=null,autoExpandPageTarget=true,research=false,templateId,knowledgeIds=[]}=req.body||{};if(!['presentation','document','graphic'].includes(type))return res.status(400).json({error:'Choose a valid type.'});if(!String(prompt||'').trim())return res.status(400).json({error:'prompt is required for the public API.'});const knowledge=await getKnowledge(Array.isArray(knowledgeIds)?knowledgeIds.slice(0,12):[]);const template=getTemplate(templateId);const project=await generateProject({type,prompt,contentMode,audience,tone,language,visualStyle,deckStyle,themeId,projectPalette,imageSource,artStyleId,customArtStyle,imageVariations,targetPageCount,autoExpandPageTarget,research,template,knowledge});await saveProject(project);await saveVersion(project,'API generation');dispatchWebhook('project.created',{projectId:project.id,title:project.title,type:project.type,source:'public-api'});res.status(201).json({data:project})}catch(e){next(e)}});
 app.post('/api/v1/projects/:id/export',requireScope('export'),async(req,res,next)=>{try{const p=await getProject(req.params.id);if(!p)return res.status(404).json({error:'Project not found.'});const review=Boolean(req.body?.review);if(!review&&(!p.qc?.pass||p.qc?.stale))return res.status(422).json({error:'Final export requires passed/current QC.'});if(!review&&!finalApprovalOk(p))return res.status(422).json({error:'Final export requires workflow status Approved by an Approver.'});const format=String(req.body?.format||'pdf').toLowerCase();const profile=format==='pdf'&&String(req.body?.profile||'digital').toLowerCase()==='print'?'print':'digital';const file=await exportProject(p,format,{review,profile});const preflight=await preflightExport(file,format,p,{profile});if(!review&&!preflight.pass)return res.status(422).json({error:'Rendered export preflight failed.',preflight});res.json({data:{url:`/exports/${encodeURIComponent(path.basename(file))}`,filename:path.basename(file),profile,preflight}})}catch(e){next(e)}});
 
 app.post('/api/projects/recover',async(req,res,next)=>{try{
@@ -447,18 +477,22 @@ app.post('/api/projects/:id/qc',async(req,res,next)=>{
 app.post('/api/projects/:id/export',async(req,res,next)=>{
   try{
     let p=await getProject(req.params.id);if(!p)return res.status(404).json({error:'Project not found.'});
-    const beforeCount=p.pages?.length||0;p=enforceA4DocumentPages(p);if((p.pages?.length||0)!==beforeCount)p.qc={...(p.qc||{}),stale:true};
-    let parsedFile=null;if(p.sourceFile?.uploadId){try{parsedFile=await loadAggregate(p.sourceFile.uploadId)}catch{}}
-    if(!p.qc || p.qc.stale){p.qc=await qualityControlProject(p,{parsedFile});await saveProject(p);}
     const review=Boolean(req.body?.review);
-    if(!review && !p.qc.pass) return res.status(422).json({error:`Final export is locked because QC is ${Math.round(p.qc.totalScore||0)}/100. Use Review download to inspect/share a draft, or resolve the QC issues before final export.`,qc:p.qc,reviewAvailable:true});
-    if(!review && !finalApprovalOk(p)) return res.status(422).json({error:'Final export is locked until an Approver marks the workflow Approved.',qc:p.qc,reviewAvailable:true,approvalRequired:true});
+    const beforeCount=p.pages?.length||0;p=enforceA4DocumentPages(p);if((p.pages?.length||0)!==beforeCount)p.qc={...(p.qc||{}),stale:true};
+    // Review exports are an inspection tool, so they must remain available before AI QC.
+    // Final exports still require current QC + approval + rendered preflight.
+    if(!review){
+      let parsedFile=null;if(p.sourceFile?.uploadId){try{parsedFile=await loadAggregate(p.sourceFile.uploadId)}catch{}}
+      if(!p.qc || p.qc.stale){p.qc=await qualityControlProject(p,{parsedFile});await saveProject(p);}
+      if(!p.qc.pass)return res.status(422).json({error:`Final export is locked because QC is ${Math.round(p.qc.totalScore||0)}/100. Download a Review PDF now, or resolve the QC issues before final delivery.`,qc:p.qc,reviewAvailable:true});
+      if(!finalApprovalOk(p))return res.status(422).json({error:'Final export is locked until an Approver marks the workflow Approved.',qc:p.qc,reviewAvailable:true,approvalRequired:true});
+    }else if((p.pages?.length||0)!==beforeCount){await saveProject(p);}
     const format=String(req.body?.format||'pdf').toLowerCase();
     const profile=format==='pdf'&&String(req.body?.profile||'digital').toLowerCase()==='print'?'print':'digital';
     const file=await exportProject(p,format,{review,profile});
     const preflight=await preflightExport(file,format,p,{profile});
     p.exportPreflight={...preflight,format,review,profile}; await saveProject(p);
-    if(!review&&!preflight.pass) return res.status(500).json({error:'Export preflight found a blocking production defect. Use Review export if needed and correct the issue before final delivery.',preflight,qc:p.qc,reviewAvailable:true});
+    if(!review&&!preflight.pass)return res.status(500).json({error:'Export preflight found a blocking production defect. Use Review export if needed and correct the issue before final delivery.',preflight,qc:p.qc,reviewAvailable:true});
     dispatchWebhook('project.exported',{projectId:p.id,format,review,profile,filename:path.basename(file),preflightPass:preflight.pass});res.json({url:`/exports/${encodeURIComponent(path.basename(file))}`,filename:path.basename(file),qc:p.qc,review,profile,preflight});
   }catch(e){next(e)}
 });
