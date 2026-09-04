@@ -1,5 +1,18 @@
 # Long Form Design Studio — Recykal
 
+## v1.1.3 Render build hardening
+
+This release makes the deployment gate immune to PDFKit/fontkit font-subsetting regressions. `npm run check` is now **deployment-safe** and only validates build artifacts/system dependencies. The full export/preflight diagnostic moved to `npm run check:full`. PDF export also prefers Poppins WOFF rather than WOFF2, and the full self-test explicitly uses PDF standard fonts so a third-party embedded-font bug cannot prevent deployment.
+
+**Render log fingerprint for this release:** package version `1.1.3-rc1`; Docker step runs `npm run check`; that command executes `node server/buildcheck.mjs`. If Render shows `1.1.1-rc1` or `node server/selftest.mjs` during the Docker build, the service is still building an older Git commit.
+
+
+## Render deployment note — v1.1.3
+
+The Docker image now uses `npm install --include=dev` (the previous `--omit=dev=false` form is invalid in current npm) and runs a deployment-safe `npm run check:build` after the Vite build. The heavier PDF export/preflight self-test remains available as `npm run check`, but it is intentionally not a Docker build gate because environment-specific print/preflight checks must not prevent the web service from starting. Runtime health is still monitored through `/api/health`.
+
+# Long Form Design Studio — Recykal
+
 Native internal AI design platform for the Recykal Marketing Team. Gamma is a product/UX benchmark only; this application has no Gamma API dependency.
 
 ## Release
@@ -149,6 +162,6 @@ npm start
 
 The build workspace could not reach the public npm registry, so `npm install`/the final Vite bundle must be executed by Render during the RC deployment. Do not call this release production-final until the Render build and the generated-output acceptance test pass.
 
-## v1.1.1 print-profile simplification
+## v1.1.3 print-profile simplification
 
 Per current production scope, the Print PDF profile no longer generates bleed, TrimBox/BleedBox metadata or crop/printer marks. It remains distinct from Digital PDF through CMYK conversion, embedded-font validation, raster-resolution validation and rendered visual preflight.

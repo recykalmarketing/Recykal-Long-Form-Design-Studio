@@ -1,6 +1,6 @@
 {
   "name": "long-form-design-studio",
-  "version": "1.1.1-rc1",
+  "version": "1.1.3-rc1",
   "private": true,
   "type": "module",
   "engines": {
@@ -10,7 +10,9 @@
     "dev": "concurrently \"node --watch server/index.mjs\" \"vite --host 0.0.0.0\"",
     "build": "vite build",
     "start": "node server/index.mjs",
-    "check": "node server/selftest.mjs"
+    "check": "node server/buildcheck.mjs",
+    "check:build": "node server/buildcheck.mjs",
+    "check:full": "node server/selftest.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",

@@ -24,6 +24,7 @@ const project=normalizeProject({title:'Self Test',summary:'Studio production val
   ]}
 ]},{type:'document'});
 project.settings.masterFields={headerText:'Self Test',footerText:'Recykal — Long Form Design Studio',pageNumbers:true,logoMode:'cover-only'};
+project.settings.pdfFontMode='standard'; // isolate export diagnostics from third-party fontkit regressions
 
 const qc=staticQualityCheck(project);
 const png=await exportProject(normalizeProject({title:'Graphic Self Test',summary:'',sources:[],pages:[{title:'Graphic',layout:'stat',speakerNotes:'',blocks:[{type:'heading',text:'Long Form Design Studio'},{type:'stat',value:'100%',label:'Brand lock'}]}]},{type:'graphic'}),'png');

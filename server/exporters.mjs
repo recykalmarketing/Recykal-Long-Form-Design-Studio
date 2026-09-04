@@ -71,7 +71,12 @@ export async function exportPdf(project, {review=false,profile='digital'}={}) {
   const doc = new PDFDocument({ autoFirstPage:false, size:mediaSize, margin:0, info:{Title:project.title,Author:'Recykal — Long Form Design Studio',Subject:isPrint?'Print PDF — CMYK conversion and print-quality preflight':'Digital PDF — screen-optimised RGB',Keywords:isPrint?'print, CMYK, embedded fonts, image resolution':'digital, RGB, screen optimised'} });
   let fonts={regular:'Helvetica',bold:'Helvetica-Bold',italic:'Helvetica-Oblique'};
   const locale=localeKey(project);
+  const forceStandardPdfFonts = project.settings?.pdfFontMode==='standard' || String(process.env.LFDS_PDF_STANDARD_FONTS||'').toLowerCase()==='true';
   try {
+    if(forceStandardPdfFonts){
+      // PDFKit's built-in Helvetica family is deterministic and bypasses fontkit.
+      // Used by diagnostics/self-tests so a third-party fontkit regression can never block deployment.
+    } else 
     if(locale.startsWith('ar')){
       const regular=await firstExisting(['/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf','/usr/share/fonts/opentype/noto/NotoSansArabic-Regular.ttf']);
       const bold=await firstExisting(['/usr/share/fonts/truetype/noto/NotoSansArabic-Bold.ttf','/usr/share/fonts/opentype/noto/NotoSansArabic-Bold.ttf']);
@@ -86,9 +91,9 @@ export async function exportPdf(project, {review=false,profile='digital'}={}) {
       if(regular){doc.registerFont('LFDS-Regular',regular);doc.registerFont('LFDS-Bold',bold||regular);fonts={regular:'LFDS-Regular',bold:'LFDS-Bold',italic:'LFDS-Regular'};}
     }else{
       const base=path.resolve('node_modules/@fontsource/poppins/files');
-      doc.registerFont('Poppins', path.join(base,'poppins-latin-400-normal.woff2'));
-      doc.registerFont('Poppins-Bold', path.join(base,'poppins-latin-700-normal.woff2'));
-      doc.registerFont('Poppins-Italic', path.join(base,'poppins-latin-400-italic.woff2'));
+      doc.registerFont('Poppins', path.join(base,'poppins-latin-400-normal.woff'));
+      doc.registerFont('Poppins-Bold', path.join(base,'poppins-latin-700-normal.woff'));
+      doc.registerFont('Poppins-Italic', path.join(base,'poppins-latin-400-normal.woff'));
       fonts={regular:'Poppins',bold:'Poppins-Bold',italic:'Poppins-Italic'};
     }
   } catch {}

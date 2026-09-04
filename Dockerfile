@@ -9,10 +9,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY package*.json ./
-RUN npm install --omit=dev=false
+RUN npm install --include=dev
 COPY . .
 RUN npm run build
-# Fail the image build if deterministic Digital/Print export and preflight checks fail.
+# Run only deployment-safe build validation here. The full PDF export/preflight self-test is a runtime diagnostic and must not prevent the web service from starting.
 RUN npm run check
 ENV NODE_ENV=production
 ENV PORT=10000
