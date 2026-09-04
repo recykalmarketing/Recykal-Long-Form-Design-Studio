@@ -35,7 +35,7 @@ BRAND LOCK — ALWAYS ON:
 - Brand: Recykal.
 - Font family: Poppins only.
 - Approved colors: Black #000000, White #FFFFFF, Bright Blue #005DFF, Midnight Blue #024C8A, Medium Purple #8460D4, Blue #567DE8, Bright Green #1DC797, Dark Green #049769, Fern Green #3E7D44, Duke Blue #0000AF.
-- Never invent a new brand color as a primary UI/design color.
+- Default to the approved Recykal palette. When the user explicitly supplies a PROJECT PALETTE/HEX colours for a project, treat those colours as an authorised project-level design exception for that asset only. Do not invent additional colours beyond the supplied palette and Recykal neutrals.
 - Never alter, stretch, rotate, skew, outline, recolor, or rearrange the Recykal logo.
 - Preserve generous clear space around the logo.
 - Use strong editorial hierarchy, professional spacing, and production-ready layouts.

@@ -45,7 +45,32 @@ export const ART_STYLES = [
   {id:'custom',group:'Custom',name:'Custom',description:'User-defined image art direction.',prompt:''}
 ];
 
-export function getTheme(id='recykal-core'){return THEMES.find(x=>x.id===id)||THEMES[0]}
+export function normalizeProjectPalette(values=[]){
+  const out=[];
+  for(const value of Array.isArray(values)?values:[]){
+    const raw=String(value||'').trim().toUpperCase();
+    const hex=/^#[0-9A-F]{6}$/.test(raw)?raw:(/^[0-9A-F]{6}$/.test(raw)?`#${raw}`:null);
+    if(hex&&!out.includes(hex))out.push(hex);
+    if(out.length>=8)break;
+  }
+  return out;
+}
+function luminance(hex){
+  const c=hex.replace('#','').match(/.{2}/g).map(x=>parseInt(x,16)/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4);
+  return .2126*c[0]+.7152*c[1]+.0722*c[2];
+}
+function contrast(a,b){
+  const l1=luminance(a),l2=luminance(b),hi=Math.max(l1,l2),lo=Math.min(l1,l2);
+  return (hi+.05)/(lo+.05);
+}
+export function getTheme(id='recykal-core',projectPalette=[]){
+  const base=THEMES.find(x=>x.id===id)||THEMES[0];
+  const colors=normalizeProjectPalette(projectPalette);
+  if(!colors.length)return base;
+  const candidateDark=colors[3];
+  const safeDark=candidateDark&&contrast(candidateDark,'#FFFFFF')>=4.5?candidateDark:base.tokens.dark;
+  return {...base,name:`${base.name} + Project palette`,description:`${base.description} Project-specific colours are applied to design accents.`,tokens:{...base.tokens,primary:colors[0]||base.tokens.primary,secondary:colors[1]||base.tokens.secondary,accent:colors[2]||base.tokens.accent,dark:safeDark},projectPalette:colors};
+}
 export function getDeckStyle(id='auto'){return DECK_STYLES.find(x=>x.id===id)||DECK_STYLES[0]}
 export function getArtStyle(id='auto'){return ART_STYLES.find(x=>x.id===id)||ART_STYLES[0]}
 export function getImageSource(id='mixed'){return IMAGE_SOURCES.find(x=>x.id===id)||IMAGE_SOURCES.find(x=>x.id==='mixed')}

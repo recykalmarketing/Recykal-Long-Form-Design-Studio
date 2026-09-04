@@ -101,7 +101,7 @@ export async function exportPdf(project, {review=false,profile='digital'}={}) {
   const endPromise=new Promise((resolve,reject)=>{doc.on('end',resolve);doc.on('error',reject)});
   const logo=await logoPng();
   const master={headerText:'',footerText:'',pageNumbers:true,logoMode:'cover-only',...(project.settings?.masterFields||{})};
-  const theme=getTheme(project.settings?.themeId||'recykal-core'); const T=theme.tokens;
+  const theme=getTheme(project.settings?.themeId||'recykal-core',project.settings?.projectPalette||[]); const T=theme.tokens;
   const M=isPresentation?48:42;
   const footerH=isPresentation?26:34;
   let physicalPage=0,pageOpen=false;
@@ -190,7 +190,7 @@ export async function exportPptx(project, {review=false}={}) {
   pptx.theme={headFontFace:pptFont,bodyFontFace:pptFont,lang:project.settings?.locale||'en-IN'};
   const logo=await logoPng();
   const master={headerText:'',footerText:'',pageNumbers:true,logoMode:'cover-only',...(project.settings?.masterFields||{})};
-  const theme=getTheme(project.settings?.themeId||'recykal-core'); const T=theme.tokens;
+  const theme=getTheme(project.settings?.themeId||'recykal-core',project.settings?.projectPalette||[]); const T=theme.tokens;
   const palette=[T.primary,T.secondary,T.accent,T.dark];
   for (let i=0;i<project.pages.length;i++) {
     const page=project.pages[i]; const slide=pptx.addSlide();
@@ -237,7 +237,7 @@ function wrapSvgText(text,maxChars=34){const words=String(text).split(/\s+/);con
 export async function exportGraphicPng(project, {review=false}={}) {
   await fs.mkdir(EXPORT_DIR,{recursive:true});
   const page=project.pages[0];
-  const theme=getTheme(project.settings?.themeId||'recykal-core'); const T=theme.tokens;
+  const theme=getTheme(project.settings?.themeId||'recykal-core',project.settings?.projectPalette||[]); const T=theme.tokens;
   const w=1080,h=1350;
   const logoSvg=await fs.readFile(LOGO_PATH,'utf8');
   const logoData=`data:image/svg+xml;base64,${Buffer.from(logoSvg).toString('base64')}`;

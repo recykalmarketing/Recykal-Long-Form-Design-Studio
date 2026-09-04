@@ -34,3 +34,12 @@ Scope: `export`
 ```
 
 Final exports require current QC; when the organization approval gate is enabled they also require workflow status `Approved`.
+
+### Optional project palette
+Generation requests may include `projectPalette`, an array of up to 8 six-digit HEX strings, for example:
+
+```json
+{"projectPalette":["#005DFF","#1DC797","#101828"]}
+```
+
+If omitted or empty, the selected Recykal theme palette is used. Project palette colours affect design accents only; logo artwork and typography rules remain locked.

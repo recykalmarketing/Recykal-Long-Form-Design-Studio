@@ -7,7 +7,7 @@ import { BRAND, brandSystemPrompt } from './brand.mjs';
 import { projectSchema, pageSchema, qcSchema, outlineSchema, variationsSchema } from './schemas.mjs';
 import { assetSpecificRules, qcRubricPrompt, DESIGN_KNOWLEDGE, REFERENCE_LAYOUT_LEARNINGS } from './designKnowledge.mjs';
 import { staticQualityCheck, mergeQualityChecks } from './qc.mjs';
-import { getTheme, getDeckStyle, getArtStyle, getImageSource } from './visuals.mjs';
+import { getTheme, getDeckStyle, getArtStyle, getImageSource, normalizeProjectPalette } from './visuals.mjs';
 import { persistBytes } from './assets.mjs';
 import { searchStock, fetchStockImage } from './stock.mjs';
 import { getBinaryAsset } from './store.mjs';
@@ -22,7 +22,7 @@ function client() {
 
 function normalizeBlock(block={}) {
   return {
-    id: uuid(),
+    id: block.id || uuid(),
     type: block.type || 'paragraph',
     text: block.text || '',
     items: Array.isArray(block.items) ? block.items : [],
@@ -46,7 +46,7 @@ function normalizeBlock(block={}) {
 
 function normalizePage(page={}) {
   return {
-    id: uuid(),
+    id: page.id || uuid(),
     title: page.title || 'Untitled',
     layout: page.layout || 'editorial',
     blocks: (page.blocks || []).map(normalizeBlock),
@@ -67,7 +67,7 @@ export function normalizeProject(raw, options={}) {
     sourceFile: options.sourceFile || null,
     inputMode: options.inputMode || 'prompt',
     contentMode: options.contentMode || 'generate',
-    settings: { deckStyle:'auto', themeId:'recykal-core', imageSource:'mixed', artStyleId:'auto', customArtStyle:'', imageVariations:1, styleReferences:[], masterFields:{headerText:'',footerText:'',pageNumbers:true,logoMode:'cover-only'}, ...(options.settings||{}), masterFields:{headerText:'',footerText:'',pageNumbers:true,logoMode:'cover-only', ...((options.settings||{}).masterFields||{})} },
+    settings: { deckStyle:'auto', themeId:'recykal-core', projectPalette:[], imageSource:'mixed', artStyleId:'auto', customArtStyle:'', imageVariations:1, styleReferences:[], masterFields:{headerText:'',footerText:'',pageNumbers:true,logoMode:'cover-only'}, ...(options.settings||{}), masterFields:{headerText:'',footerText:'',pageNumbers:true,logoMode:'cover-only', ...((options.settings||{}).masterFields||{})} },
     brand: BRAND,
     qc: options.qc || raw.qc || null,
     workflow: options.workflow || raw.workflow || {status:'Draft',assignee:'',comments:[]},
@@ -171,7 +171,7 @@ async function materializeAutoImages(project, onProgress=null) {
       const optionCount=Math.max(1,Math.min(3,Number(project.settings?.imageVariations)||1));
       const dir=path.resolve('data/uploads/generated'); await fs.mkdir(dir,{recursive:true}); const urls=[];let focalPath='';
       for(let vi=0;vi<optionCount;vi++){
-        const bytes=await generateImage({prompt:`${page.title}. ${block.imagePrompt}`,aspect:project.type==='graphic'?'portrait':'landscape',artStyleId:project.settings?.artStyleId||'auto',customArtStyle:project.settings?.customArtStyle||'',referencePaths:refs,themeId:project.settings?.themeId||'recykal-core'});
+        const bytes=await generateImage({prompt:`${page.title}. ${block.imagePrompt}`,aspect:project.type==='graphic'?'portrait':'landscape',artStyleId:project.settings?.artStyleId||'auto',customArtStyle:project.settings?.customArtStyle||'',referencePaths:refs,themeId:project.settings?.themeId||'recykal-core',projectPalette:project.settings?.projectPalette||[]});
         const saved=await persistBytes(bytes,{name:`generated-${uuid()}.png`,mimeType:'image/png',metadata:{kind:'ai-generated',projectId:project.id,pageId:page.id,blockId:block.id,artStyle:project.settings?.artStyleId||'auto'}});urls.push(saved.url);
         if(!focalPath){const filename=`${uuid()}.png`;focalPath=path.join(dir,filename);await fs.writeFile(focalPath,bytes)}
       }
@@ -184,7 +184,7 @@ async function materializeAutoImages(project, onProgress=null) {
   return project;
 }
 
-function generationInstruction({ type, prompt, parsedFile, contentMode, audience, tone, language, research, visualStyle, deckStyle='auto', themeId='recykal-core', imageSource='mixed', artStyleId='auto', customArtStyle='', imageVariations=1, styleReferences=[], template, knowledge=[], approvedOutline=null }) {
+function generationInstruction({ type, prompt, parsedFile, contentMode, audience, tone, language, research, visualStyle, deckStyle='auto', themeId='recykal-core', projectPalette=[], imageSource='mixed', artStyleId='auto', customArtStyle='', imageVariations=1, styleReferences=[], template, knowledge=[], approvedOutline=null }) {
   const modeMap = {
     preserve: 'PRESERVE: Keep all factual content from the source. You may reorganize it for design, but do not rewrite facts or add unsupported information.',
     improve: 'IMPROVE: Improve clarity and editorial quality while preserving factual meaning. Do not introduce new claims unless clearly supported by the source.',
@@ -195,7 +195,7 @@ function generationInstruction({ type, prompt, parsedFile, contentMode, audience
   const sourceText = parsedFile?.text ? parsedFile.text.slice(0, MAX_SOURCE_CHARS) : '';
   const sourceAssets = parsedFile?.assets?.length ? parsedFile.assets.map(a=>a.url).join('\n') : 'None';
   const systemRules = assetSpecificRules(type,{hasSource:Boolean(parsedFile),research:Boolean(research)});
-  const theme=getTheme(themeId); const deck=getDeckStyle(deckStyle); const imageSourceRule=getImageSource(imageSource); const art=getArtStyle(artStyleId);
+  const cleanPalette=normalizeProjectPalette(projectPalette); const theme=getTheme(themeId,cleanPalette); const deck=getDeckStyle(deckStyle); const imageSourceRule=getImageSource(imageSource); const art=getArtStyle(artStyleId);
   const artDirection=artStyleId==='custom' ? String(customArtStyle||'').trim() : art.prompt;
   const templateRules = template ? `\nSELECTED DESIGN SYSTEM: ${template.name}\nLAYOUT RHYTHM: ${template.sequence.join(' -> ')}\nTEMPLATE GUIDANCE: ${template.guidance}` : '';
   const knowledgeText = (knowledge||[]).map((k,i)=>`===== KNOWLEDGE ${i+1}: ${k.filename} =====\n${String(k.text||'').slice(0,120000)}`).join('\n\n');
@@ -210,6 +210,8 @@ VISUAL DIRECTION: ${visualStyle || 'Premium editorial, clean, contemporary, sust
 DECK / DOCUMENT STYLE: ${deck.name}
 STYLE BEHAVIOR: ${deck.rules}
 THEME: ${theme.name} — ${theme.description}
+PROJECT PALETTE: ${cleanPalette.length?cleanPalette.join(', '):'Not supplied — use the selected Recykal theme palette.'}
+PALETTE RULE: If a project palette is supplied, use it deliberately for project accents/data/visual fields while preserving legible neutral text/backgrounds, Poppins typography and the original Recykal logo artwork. Do not invent extra accent colours.
 IMAGE SOURCE: ${imageSourceRule.name} — ${imageSourceRule.description}
 AI ART STYLE: ${art.name}${artDirection?` — ${artDirection}`:''}
 IMAGE VARIATIONS PER GENERATED IMAGE: ${Math.max(1,Math.min(3,Number(imageVariations)||1))}
@@ -256,22 +258,40 @@ SOURCE EXTRACTION CONFIDENCE: ${parsedFile.extractionConfidence || parsedFile.me
 `;
 }
 
-async function structuredResponse({ input, schema, name, research=false }) {
+function friendlyStructuredError(err, name='structured output') {
+  const msg=String(err?.message||err||'').trim();
+  if(/unterminated string|unexpected end of json|json/i.test(msg)) return new Error(`Studio AI returned an incomplete ${name}. Retrying this page safely.`);
+  if(/maximum context|max_output|length|incomplete/i.test(msg)) return new Error(`Studio AI reached an output limit while creating ${name}. The Studio will retry with a smaller response.`);
+  return err instanceof Error ? err : new Error(msg||`Could not create ${name}.`);
+}
+
+async function structuredResponse({ input, schema, name, research=false, maxOutputTokens=16000, attempts=3 }) {
   const ai = client();
   if (!ai) return null;
-  const request = {
-    model: MODEL,
-    store: false,
-    reasoning: { effort: 'medium' },
-    instructions: brandSystemPrompt,
-    input,
-    text: { format: { type:'json_schema', name, schema, strict:true } }
-  };
-  if (research) request.tools = [{ type:'web_search' }];
-  const response = await ai.responses.create(request);
-  const text = response.output_text;
-  if (!text) throw new Error('OpenAI returned no structured output.');
-  return JSON.parse(text);
+  let lastError=null;
+  for(let attempt=1;attempt<=Math.max(1,attempts);attempt++){
+    try{
+      const request = {
+        model: MODEL,
+        store: false,
+        reasoning: { effort: attempt===1?'medium':'low' },
+        instructions: brandSystemPrompt,
+        input,
+        max_output_tokens: Math.max(2500,Math.min(32000,Number(maxOutputTokens)||16000)),
+        text: { format: { type:'json_schema', name, schema, strict:true } }
+      };
+      if (research) request.tools = [{ type:'web_search' }];
+      const response = await ai.responses.create(request);
+      if(response?.status==='incomplete') throw new Error(`Structured response incomplete: ${response?.incomplete_details?.reason||'output limit'}`);
+      const text = response.output_text;
+      if (!text) throw new Error('OpenAI returned no structured output.');
+      try{return JSON.parse(text)}catch(parseError){throw friendlyStructuredError(parseError,name)}
+    }catch(err){
+      lastError=friendlyStructuredError(err,name);
+      if(attempt<attempts) await new Promise(r=>setTimeout(r,350*attempt));
+    }
+  }
+  throw lastError||new Error(`Could not create ${name}.`);
 }
 
 
@@ -302,6 +322,76 @@ async function buildGenerationInput(options) {
   return {instruction,input,uploadedIds,ai};
 }
 
+
+const generatedPageResultSchema = {
+  type:'object',
+  additionalProperties:false,
+  required:['page','sources'],
+  properties:{
+    page: pageSchema,
+    sources: projectSchema.properties.sources
+  }
+};
+
+function projectOptionsFromGeneration(options={}){
+  return {
+    type:options.type,
+    sourceFile: options.parsedFile ? { filename:options.parsedFile.filename, kind:options.parsedFile.kind, metadata:options.parsedFile.metadata, assets:options.parsedFile.assets||[], uploadId:options.parsedFile.uploadId||null, extractionConfidence:options.parsedFile.extractionConfidence||options.parsedFile.metadata?.extractionConfidence||null } : null,
+    inputMode: options.parsedFile ? 'file' : 'prompt',
+    contentMode: options.contentMode,
+    settings:{ audience:options.audience, tone:options.tone, language:options.language, visualStyle:options.visualStyle, deckStyle:options.deckStyle||'auto', themeId:options.themeId||'recykal-core', projectPalette:normalizeProjectPalette(options.projectPalette), imageSource:options.imageSource||'mixed', artStyleId:options.artStyleId||'auto', customArtStyle:options.customArtStyle||'', imageVariations:Math.max(1,Math.min(3,Number(options.imageVariations)||1)), styleReferences:options.styleReferences||[], masterFields:{headerText:'',footerText:'',pageNumbers:true,logoMode:'cover-only'}, research:options.contentMode==='preserve'?false:Boolean(options.research), templateId:options.template?.id||null, templateName:options.template?.name||null, knowledgeIds:(options.knowledge||[]).map(k=>k.id), approvedAssets:(options.knowledge||[]).flatMap(k=>k.assets||[]).slice(0,60) }
+  };
+}
+
+function terms(text=''){
+  return String(text).toLowerCase().replace(/[^a-z0-9%₹$€£]+/g,' ').split(/\s+/).filter(x=>x.length>3).slice(0,40);
+}
+function sourceChunks(text='',size=16000,overlap=1800){
+  const clean=String(text||'');if(!clean)return[];const out=[];let pos=0;while(pos<clean.length){out.push({start:pos,text:clean.slice(pos,pos+size)});if(pos+size>=clean.length)break;pos+=Math.max(2000,size-overlap)}return out;
+}
+function relevantSourceContext(options,item,index,total,maxChars=32000){
+  const text=String(options.parsedFile?.text||'');if(!text)return'';
+  const chunks=sourceChunks(text,14000,1800);if(!chunks.length)return text.slice(0,maxChars);
+  const q=terms(`${item?.title||''} ${item?.purpose||''} ${item?.role||''}`);const scored=chunks.map(c=>{const low=c.text.toLowerCase();let score=0;for(const t of q)if(low.includes(t))score++;return {c,score}}).sort((a,b)=>b.score-a.score||a.c.start-b.c.start);
+  const proportional=chunks[Math.min(chunks.length-1,Math.floor((Math.max(0,index)/Math.max(1,total))*chunks.length))];
+  const chosen=[];const seen=new Set();for(const c of [proportional,...scored.slice(0,3).map(x=>x.c)]){if(!c||seen.has(c.start))continue;seen.add(c.start);chosen.push(c);if(chosen.reduce((n,x)=>n+x.text.length,0)>=maxChars)break}
+  return chosen.map((c,i)=>`SOURCE EXCERPT ${i+1} (around character ${c.start}):\n${c.text}`).join('\n\n').slice(0,maxChars);
+}
+function relevantKnowledgeContext(options,item,maxChars=12000){
+  const q=terms(`${item?.title||''} ${item?.purpose||''}`);const ranked=(options.knowledge||[]).map(k=>{const text=String(k.text||'');const low=text.toLowerCase();let score=0;for(const t of q)if(low.includes(t))score++;return {k,text,score}}).sort((a,b)=>b.score-a.score);
+  return ranked.slice(0,2).map(({k,text})=>`KNOWLEDGE: ${k.filename}\n${text.slice(0,6000)}`).join('\n\n').slice(0,maxChars);
+}
+function compactPageContext(pages=[]){
+  return pages.slice(-3).map((p,i)=>({title:p.title,layout:p.layout,blocks:(p.blocks||[]).map(b=>({type:b.type,text:String(b.text||'').slice(0,600),items:(b.items||[]).slice(0,8),label:b.label,value:b.value,caption:String(b.caption||'').slice(0,240),tableHeaders:(b.tableHeaders||[]).slice(0,12),tableRows:(b.tableRows||[]).slice(0,8)}))}));
+}
+function mergeSources(existing=[],incoming=[]){
+  const out=[...(existing||[])];const keys=new Set(out.map(s=>String(s.url||s.title||'').trim().toLowerCase()).filter(Boolean));for(const src of incoming||[]){const key=String(src?.url||src?.title||'').trim().toLowerCase();if(!key||keys.has(key))continue;keys.add(key);out.push(src)}return out.slice(0,120);
+}
+
+async function generatePlannedPage(options,project,item,index,total,onProgress){
+  const ruleSource=options.parsedFile?{...options.parsedFile,text:'',assets:[]}:null;
+  const globalRules=generationInstruction({...options,parsedFile:ruleSource,knowledge:[],approvedOutline:null});
+  const prior=compactPageContext(project.pages);
+  const allowResearch=options.contentMode!=='preserve' && Boolean(options.research||options.contentMode==='research_expand') && /evidence|research|market|context|finding|trend|benchmark|comparison|policy|data|impact/i.test(`${item?.role||''} ${item?.title||''} ${item?.purpose||''}`);
+  let lastError=null;
+  for(let attempt=1;attempt<=3;attempt++){
+    const sourceMax=attempt===1?32000:attempt===2?20000:12000;
+    const source=relevantSourceContext(options,item,index,total,sourceMax);
+    const knowledge=relevantKnowledgeContext(options,item,attempt===1?12000:7000);
+    const conservative=attempt>1?`\nRECOVERY PASS ${attempt}: Keep the page response compact. Prefer fewer, complete blocks over long prose. Never truncate a string, table cell, list item or JSON field. Preserve all critical source facts assigned to this page.`:'';
+    const input=`Generate exactly ONE ${options.type==='presentation'?'slide':options.type==='graphic'?'graphic canvas':'designed document page/section'} as item ${index+1} of ${total}. This request is deliberately page-scoped: never return the full project.\n\nPLANNED PAGE:\nTitle: ${item?.title||`Page ${index+1}`}\nRole: ${item?.role||'narrative'}\nRequired layout: ${item?.layout||'editorial'}\nVisual treatment: ${item?.visualTreatment||'Use the design intelligence rules'}\nPurpose: ${item?.purpose||''}\n\nPROJECT TITLE: ${project.title}\nPROJECT SUMMARY/STRATEGY: ${project.summary}\nRECENT COMPLETED PAGES (avoid repetition and maintain continuity):\n${JSON.stringify(prior)}\n\n${globalRules}\n\n${source?`AUTHORITATIVE SOURCE EXCERPTS FOR THIS PAGE:\n${source}\n`:''}${knowledge?`\nRELEVANT RECYKAL KNOWLEDGE CONTEXT:\n${knowledge}\n`:''}${conservative}\n\nPAGE-SCOPED RULES:\n- Return one page and its sources only.\n- Follow the planned role/layout unless source fidelity makes a small safe adjustment necessary.\n- Do not duplicate prior-page content.\n- If this page contains a source table, preserve its cells and units; use a table block.\n- If content is sequential/chronological/comparative, use process/timeline/comparison structure rather than plain paragraphs.\n- For image needs, create image blocks with specific imagePrompt and altText, not fake URLs.\n- Never invent metrics, citations, quotations, people, dates or product claims.\n- Keep body copy readable; use columns or additional pages rather than tiny type.\n- Do not put the Recykal logo into page content; the master renderer handles the logo on the cover only.`;
+    try{
+      const raw=await structuredResponse({name:'recykal_incremental_page',schema:generatedPageResultSchema,research:allowResearch,input,maxOutputTokens:attempt===1?12000:8000,attempts:1});
+      if(!raw?.page)throw new Error('Studio AI returned no page.');
+      const page=normalizePage({...raw.page,title:raw.page.title||item?.title||`Page ${index+1}`,layout:raw.page.layout||item?.layout||'editorial'});
+      return {page,sources:raw.sources||[]};
+    }catch(err){
+      lastError=err; if(attempt<3)await onProgress({stage:'retry',index,total,attempt:attempt+1,message:`Page ${index+1} needed a safe retry. Completed pages are preserved.`});
+    }
+  }
+  const error=new Error(`Page ${index+1} could not be completed after 3 safe retries. Completed pages have been preserved so you can resume instead of starting over.`);error.cause=lastError;error.projectId=project.id;throw error;
+}
+
 function streamedPagesFromJson(text='') {
   const key=text.indexOf('"pages"'); if(key<0)return [];
   const start=text.indexOf('[',key); if(start<0)return [];
@@ -322,12 +412,12 @@ async function finalizeGeneratedProject(data, options, {onProgress=null}={}) {
     type:options.type,
     sourceFile: options.parsedFile ? { filename:options.parsedFile.filename, kind:options.parsedFile.kind, metadata:options.parsedFile.metadata, assets:options.parsedFile.assets||[], uploadId:options.parsedFile.uploadId||null, extractionConfidence:options.parsedFile.extractionConfidence||options.parsedFile.metadata?.extractionConfidence||null } : null,
     inputMode: options.parsedFile ? 'file' : 'prompt', contentMode: options.contentMode,
-    settings:{ audience:options.audience, tone:options.tone, language:options.language, visualStyle:options.visualStyle, deckStyle:options.deckStyle||'auto', themeId:options.themeId||'recykal-core', imageSource:options.imageSource||'mixed', artStyleId:options.artStyleId||'auto', customArtStyle:options.customArtStyle||'', imageVariations:Math.max(1,Math.min(3,Number(options.imageVariations)||1)), styleReferences:options.styleReferences||[], masterFields:{headerText:'',footerText:'',pageNumbers:true,logoMode:'cover-only'}, research:options.contentMode==='preserve'?false:Boolean(options.research), templateId:options.template?.id||null, templateName:options.template?.name||null, knowledgeIds:(options.knowledge||[]).map(k=>k.id), approvedAssets:(options.knowledge||[]).flatMap(k=>k.assets||[]).slice(0,60) }
+    settings:{ audience:options.audience, tone:options.tone, language:options.language, visualStyle:options.visualStyle, deckStyle:options.deckStyle||'auto', themeId:options.themeId||'recykal-core', projectPalette:normalizeProjectPalette(options.projectPalette), imageSource:options.imageSource||'mixed', artStyleId:options.artStyleId||'auto', customArtStyle:options.customArtStyle||'', imageVariations:Math.max(1,Math.min(3,Number(options.imageVariations)||1)), styleReferences:options.styleReferences||[], masterFields:{headerText:'',footerText:'',pageNumbers:true,logoMode:'cover-only'}, research:options.contentMode==='preserve'?false:Boolean(options.research), templateId:options.template?.id||null, templateName:options.template?.name||null, knowledgeIds:(options.knowledge||[]).map(k=>k.id), approvedAssets:(options.knowledge||[]).flatMap(k=>k.assets||[]).slice(0,60) }
   });
   project=applyLayoutIntelligence(project); if(onProgress)await onProgress({stage:'layout',project});
   project.qc=await qualityControlProject(project,{parsedFile:options.parsedFile}); if(onProgress)await onProgress({stage:'qc',qc:project.qc,project});
   const ai=client(); const autoQc=String(process.env.AUTO_QC ?? 'true').toLowerCase() !== 'false'; const maxRevisions=Math.max(0,Math.min(2,Number(process.env.QC_MAX_REVISIONS||1)));
-  if(ai&&autoQc&&maxRevisions>0&&!project.qc.pass){
+  if(ai&&autoQc&&maxRevisions>0&&!project.qc.pass&&!options.incremental&&project.pages.length<=8){
     for(let attempt=0;attempt<maxRevisions&&!project.qc.pass;attempt++){
       if(onProgress)await onProgress({stage:'revision',attempt:attempt+1,qc:project.qc});
       const source=options.parsedFile?.text?options.parsedFile.text.slice(0,180000):'';
@@ -343,41 +433,67 @@ async function finalizeGeneratedProject(data, options, {onProgress=null}={}) {
 }
 
 export async function generateProjectStream(options, onProgress=async()=>{}) {
-  const {input,uploadedIds,ai}=await buildGenerationInput(options);
-  if(!ai){const project=await generateProject(options);for(let i=0;i<project.pages.length;i++)await onProgress({stage:'page',index:i,total:project.pages.length,page:project.pages[i]});await onProgress({stage:'complete',project});return project;}
-  const request={model:MODEL,store:false,reasoning:{effort:'medium'},instructions:brandSystemPrompt,input,text:{format:{type:'json_schema',name:'recykal_design_project',schema:projectSchema,strict:true}},stream:true};
-  if(options.contentMode!=='preserve'&&(options.research||options.contentMode==='research_expand'))request.tools=[{type:'web_search'}];
-  let text=''; let emitted=0; let stream;
+  const ai=client();
+  if(!ai){const project=await finalizeGeneratedProject(demoProject(options),options,{onProgress});for(let i=0;i<project.pages.length;i++)await onProgress({stage:'page',index:i,total:project.pages.length,page:project.pages[i]});await onProgress({stage:'complete',project});return project;}
+
+  // Long-form generation is intentionally incremental. We never ask the model to emit
+  // one giant project JSON object because a truncated response would invalidate every page.
+  let planItems=Array.isArray(options.approvedOutline)&&options.approvedOutline.length?options.approvedOutline:null;
+  let planTitle='';let planStrategy='';
+  if(!planItems){
+    await onProgress({stage:'starting',message:'Planning the narrative architecture…'});
+    const outline=await generateOutline(options);
+    planItems=outline?.items||[];planTitle=outline?.title||'';planStrategy=outline?.strategy||'';
+  }else{
+    planTitle=options.prompt||options.parsedFile?.filename||'Long Form Design Studio project';
+    planStrategy='Approved design plan';
+  }
+  if(options.type==='graphic')planItems=planItems.slice(0,1);
+  if(!planItems.length)throw new Error('Studio AI could not create a usable design plan. Please adjust the brief and try again.');
+
+  const base=projectOptionsFromGeneration(options);
+  let project=normalizeProject({title:planTitle||options.prompt||options.parsedFile?.filename||'Untitled project',summary:planStrategy,pages:[],sources:[]},base);
+  project.generation={status:'running',completed:0,total:planItems.length,startedAt:new Date().toISOString(),lastError:'',plan:planItems};
+  await onProgress({stage:'accepted',projectId:project.id,total:planItems.length,message:'Page-safe generation started.'});
+  if(typeof options.checkpoint==='function')await options.checkpoint(project,{stage:'accepted'});
+
   try{
-    await onProgress({stage:'starting',message:'Structuring content and design…'});
-    stream=await ai.responses.create(request,options.signal?{signal:options.signal}:undefined);
-    for await (const event of stream){
-      if(event.type==='response.output_text.delta'){
-        text+=event.delta||''; const pages=streamedPagesFromJson(text);
-        while(emitted<pages.length){const page=normalizePage(pages[emitted]);await onProgress({stage:'page',index:emitted,total:null,page});emitted++;}
-      } else if(event.type==='error'){throw new Error(event.message||'OpenAI streaming generation failed.');}
+    for(let i=0;i<planItems.length;i++){
+      await onProgress({stage:'page-start',index:i,total:planItems.length,message:`Building ${options.type==='presentation'?'slide':'page'} ${i+1} of ${planItems.length}…`});
+      const result=await generatePlannedPage(options,project,planItems[i],i,planItems.length,onProgress);
+      project.pages.push(result.page);project.sources=mergeSources(project.sources,result.sources);project=applyLayoutIntelligence(project);
+      project.generation={...project.generation,status:'running',completed:i+1,total:planItems.length,lastError:''};
+      if(typeof options.checkpoint==='function')await options.checkpoint(project,{stage:'page',index:i});
+      await onProgress({stage:'page',index:i,total:planItems.length,page:project.pages[i],projectId:project.id});
     }
-    const raw=JSON.parse(text); const project=await finalizeGeneratedProject(raw,options,{onProgress}); await onProgress({stage:'complete',project}); return project;
-  } finally { for(const id of uploadedIds)ai.files.delete(id).catch(()=>{}); }
+
+    // Finalization can inspect the complete project, but it is not allowed to regenerate
+    // the whole project as a single huge JSON response. QC and visual materialization are separate passes.
+    const finalized=await finalizeGeneratedProject(project,{...options,incremental:true},{onProgress});
+    finalized.generation={...project.generation,status:'complete',completed:finalized.pages.length,total:planItems.length,finishedAt:new Date().toISOString(),lastError:''};
+    if(typeof options.checkpoint==='function')await options.checkpoint(finalized,{stage:'complete'});
+    await onProgress({stage:'complete',project:finalized});return finalized;
+  }catch(err){
+    project.generation={...project.generation,status:'failed',completed:project.pages.length,total:planItems.length,lastError:err.message||'Generation failed',failedAt:new Date().toISOString()};
+    if(typeof options.checkpoint==='function')await options.checkpoint(project,{stage:'failed',error:err.message});
+    err.projectId=err.projectId||project.id;err.completedPages=project.pages.length;err.totalPages=planItems.length;throw err;
+  }
 }
 
 export async function generateProject(options) {
-  const {input,uploadedIds,ai}=await buildGenerationInput(options);
-  let raw;
-  try {
-    raw = await structuredResponse({
-      name:'recykal_design_project',
-      schema: projectSchema,
-      research: options.contentMode === 'preserve' ? false : (options.research || options.contentMode === 'research_expand'),
-      input
-    });
-  } finally {
-    if (ai) for (const id of uploadedIds) ai.files.delete(id).catch(()=>{});
-  }
-  const data = raw || demoProject(options);
-  return finalizeGeneratedProject(data,options);
+  // Non-streaming callers use the same page-scoped engine. This keeps API/automation
+  // generation safe for long documents instead of reverting to one giant JSON response.
+  return generateProjectStream(options,async()=>{});
 }
 
+
+function compactProjectForQc(project){
+  return {
+    id:project.id,title:project.title,type:project.type,summary:project.summary,contentMode:project.contentMode,settings:project.settings,
+    pages:(project.pages||[]).map((p,i)=>({index:i,title:p.title,layout:p.layout,blocks:(p.blocks||[]).map(b=>({type:b.type,text:String(b.text||'').slice(0,1400),items:(b.items||[]).slice(0,12).map(x=>String(x).slice(0,500)),label:b.label,value:b.value,caption:String(b.caption||'').slice(0,500),data:(b.data||[]).slice(0,40),tableHeaders:(b.tableHeaders||[]).slice(0,20),tableRows:(b.tableRows||[]).slice(0,40).map(r=>r.slice(0,20)),altText:b.altText,hasImage:Boolean(b.imageUrl),provenance:b.provenance||null}))})),
+    sources:(project.sources||[]).slice(0,80)
+  };
+}
 
 export async function qualityControlProject(project,{parsedFile=null}={}) {
   const staticQc=staticQualityCheck(project);
@@ -388,7 +504,7 @@ export async function qualityControlProject(project,{parsedFile=null}={}) {
   try {
     review=await structuredResponse({
       name:'design_quality_review',schema:qcSchema,research:false,
-      input:`You are the final quality gate for Recykal Long Form Design Studio. ${qcRubricPrompt}\nProject type: ${project.type}\nContent mode: ${project.contentMode}\nSource supplied: ${Boolean(sourceText)}\n\nPROJECT JSON:\n${JSON.stringify(project)}${sourceText?`\n\nSOURCE EXCERPT FOR FIDELITY CHECK:\n${sourceText}`:''}\n\nJudge comprehension, hierarchy, long-form rhythm, evidence integrity, chart choice/data clarity, image purpose, accessibility, production risk and source fidelity. If a claim cannot be verified from supplied source, do not call it source-supported. Return the exact QC schema.`
+      input:`You are the final quality gate for Recykal Long Form Design Studio. ${qcRubricPrompt}\nProject type: ${project.type}\nContent mode: ${project.contentMode}\nSource supplied: ${Boolean(sourceText)}\n\nPROJECT QC REPRESENTATION:\n${JSON.stringify(compactProjectForQc(project))}${sourceText?`\n\nSOURCE EXCERPT FOR FIDELITY CHECK:\n${sourceText}`:''}\n\nJudge comprehension, hierarchy, long-form rhythm, evidence integrity, chart choice/data clarity, image purpose, accessibility, production risk and source fidelity. If a claim cannot be verified from supplied source, do not call it source-supported. Return the exact QC schema.`
     });
   } catch { return staticQc; }
   if(!review) return staticQc;
@@ -403,7 +519,7 @@ export async function generateNextPage(project, instruction='Continue naturally 
   const context = project.pages.slice(-4).map(p=>({title:p.title,blocks:p.blocks.map(b=>({type:b.type,text:b.text,items:b.items,label:b.label,value:b.value}))}));
   const raw = await structuredResponse({
     name:'recykal_design_page', schema:pageSchema, research:false,
-    input:`Project title: ${project.title}\nProject type: ${project.type}\nStyle: ${project.settings?.deckStyle||'auto'}; theme=${project.settings?.themeId||'recykal-core'}; image source=${project.settings?.imageSource||'mixed'}; art style=${project.settings?.artStyleId||'auto'}\nRecent pages: ${JSON.stringify(context)}\nInstruction: ${instruction}\nCreate exactly one useful next page/section. Do not repeat prior content. Preserve the document's narrative architecture and page rhythm. Use semantic hierarchy before styling, avoid same-layout repetition, and obey the full Design Intelligence Knowledge Base.`
+    input:`Project title: ${project.title}\nProject type: ${project.type}\nStyle: ${project.settings?.deckStyle||'auto'}; theme=${project.settings?.themeId||'recykal-core'}; project palette=${(project.settings?.projectPalette||[]).join(', ')||'default Recykal theme'}; image source=${project.settings?.imageSource||'mixed'}; art style=${project.settings?.artStyleId||'auto'}\nRecent pages: ${JSON.stringify(context)}\nInstruction: ${instruction}\nCreate exactly one useful next page/section. Do not repeat prior content. Preserve the document's narrative architecture and page rhythm. Use semantic hierarchy before styling, avoid same-layout repetition, and obey the full Design Intelligence Knowledge Base.`
   });
   if (!raw) return normalizePage({title:'New section',layout:'editorial',blocks:[{type:'heading',text:'New section'},{type:'paragraph',text:'Connect OPENAI_API_KEY to generate this section with AI.'}],speakerNotes:''});
   return normalizePage(raw);
@@ -416,7 +532,7 @@ export async function editWithAI({ project, pageId, blockId, action, instruction
   if (['improve-layout','page-variation'].includes(action)) {
     const raw = await structuredResponse({
       name:'recykal_design_page', schema:pageSchema, research:false,
-      input:`Project type: ${project.type}\nStyle: ${project.settings?.deckStyle||'auto'}; theme=${project.settings?.themeId||'recykal-core'}; image source=${project.settings?.imageSource||'mixed'}; art style=${project.settings?.artStyleId||'auto'}\nPage JSON: ${JSON.stringify(page)}\nAction: ${action}\nUser instruction: ${instruction||''}\nReturn an improved replacement page. Preserve all factual claims unless the user explicitly requests content changes. Apply the Design Intelligence Knowledge Base: fix hierarchy, proximity, spacing, long-form rhythm, chart/image purpose, accessibility and production risks; do not merely decorate.`
+      input:`Project type: ${project.type}\nStyle: ${project.settings?.deckStyle||'auto'}; theme=${project.settings?.themeId||'recykal-core'}; project palette=${(project.settings?.projectPalette||[]).join(', ')||'default Recykal theme'}; image source=${project.settings?.imageSource||'mixed'}; art style=${project.settings?.artStyleId||'auto'}\nPage JSON: ${JSON.stringify(page)}\nAction: ${action}\nUser instruction: ${instruction||''}\nReturn an improved replacement page. Preserve all factual claims unless the user explicitly requests content changes. Apply the Design Intelligence Knowledge Base: fix hierarchy, proximity, spacing, long-form rhythm, chart/image purpose, accessibility and production risks; do not merely decorate.`
     });
     return { kind:'page', value: raw ? normalizePage(raw) : page };
   }
@@ -447,10 +563,10 @@ export async function reflowProject(project, deckStyle='auto', themeId=null) {
   const ai=client();
   project.settings={...(project.settings||{}),deckStyle:style,themeId:themeId||project.settings?.themeId||'recykal-core',masterFields:{headerText:'',footerText:'',pageNumbers:true,logoMode:'cover-only',...((project.settings||{}).masterFields||{})}};
   if(!ai){ project.qc={...(project.qc||{}),stale:true}; return project; }
-  const deck=getDeckStyle(style); const theme=getTheme(project.settings.themeId);
+  const deck=getDeckStyle(style); const theme=getTheme(project.settings.themeId,project.settings?.projectPalette||[]);
   const revised=await structuredResponse({
     name:'recykal_design_project_reflow',schema:projectSchema,research:false,
-    input:`Recompose this existing ${project.type} project using STYLE: ${deck.name}. ${deck.rules}\nTHEME: ${theme.name}. ${theme.description}\n\nNON-NEGOTIABLE: preserve every factual claim, number, date, name, table cell, chart datum, citation and source. Do not invent content. Keep the same overall narrative meaning. Improve layout choice, column use, page rhythm and visual hierarchy. Logo belongs on the first/cover page only unless a project master explicitly asks otherwise. Return the complete replacement project JSON.\n\nPROJECT:\n${JSON.stringify(project)}`
+    input:`Recompose this existing ${project.type} project using STYLE: ${deck.name}. ${deck.rules}\nTHEME: ${theme.name}. ${theme.description}\nPROJECT PALETTE: ${(project.settings?.projectPalette||[]).join(', ')||'Use selected Recykal theme palette.'}\n\nNON-NEGOTIABLE: preserve every factual claim, number, date, name, table cell, chart datum, citation and source. Do not invent content. Keep the same overall narrative meaning. Improve layout choice, column use, page rhythm and visual hierarchy. Logo belongs on the first/cover page only unless a project master explicitly asks otherwise. Return the complete replacement project JSON.\n\nPROJECT:\n${JSON.stringify(project)}`
   });
   if(!revised) return project;
   const next=normalizeProject(revised,{...project,id:project.id,type:project.type,sourceFile:project.sourceFile,inputMode:project.inputMode,contentMode:project.contentMode,settings:{...project.settings,deckStyle:style},createdAt:project.createdAt});
@@ -466,7 +582,7 @@ export async function generateOutline(options){
 
 export async function generatePageVariations(project,pageId){
   const page=project.pages.find(p=>p.id===pageId); if(!page)throw new Error('Page not found.');
-  const raw=await structuredResponse({name:'recykal_page_variations',schema:variationsSchema,research:false,input:`Create exactly THREE distinct design variations for this page. Preserve every factual claim, number, table cell, chart datum and source. Each variation must use the same content meaning but explore a genuinely different composition. Respect project style=${project.settings?.deckStyle||'auto'}, theme=${project.settings?.themeId||'recykal-core'}, imageSource=${project.settings?.imageSource||'mixed'}, artStyle=${project.settings?.artStyleId||'auto'}.\nVariation 1: editorial/clear. Variation 2: more visual/synthesis-led. Variation 3: more analytical/structured. Do not simply reorder identical blocks.\n\nPAGE:\n${JSON.stringify(page)}`});
+  const raw=await structuredResponse({name:'recykal_page_variations',schema:variationsSchema,research:false,input:`Create exactly THREE distinct design variations for this page. Preserve every factual claim, number, table cell, chart datum and source. Each variation must use the same content meaning but explore a genuinely different composition. Respect project style=${project.settings?.deckStyle||'auto'}, theme=${project.settings?.themeId||'recykal-core'}, projectPalette=${(project.settings?.projectPalette||[]).join(', ')||'default Recykal theme'}, imageSource=${project.settings?.imageSource||'mixed'}, artStyle=${project.settings?.artStyleId||'auto'}.\nVariation 1: editorial/clear. Variation 2: more visual/synthesis-led. Variation 3: more analytical/structured. Do not simply reorder identical blocks.\n\nPAGE:\n${JSON.stringify(page)}`});
   return (raw?.variations||[]).map(normalizePage);
 }
 
@@ -477,12 +593,12 @@ export async function repurposeProject(project,targetType){
   return applyLayoutIntelligence(normalizeProject(raw,{type:targetType,contentMode:project.contentMode,inputMode:'repurpose',settings:{...project.settings},sourceFile:project.sourceFile}));
 }
 
-export async function generateImage({ prompt, aspect='landscape', artStyleId='auto', customArtStyle='', referencePaths=[], themeId='recykal-core' }) {
+export async function generateImage({ prompt, aspect='landscape', artStyleId='auto', customArtStyle='', referencePaths=[], themeId='recykal-core', projectPalette=[] }) {
   const ai = client();
   if (!ai) throw new Error('Studio AI is not connected on the server.');
   const size = aspect==='portrait' ? '1024x1536' : aspect==='square' ? '1024x1024' : '1536x1024';
-  const art=getArtStyle(artStyleId); const theme=getTheme(themeId); const styleText=artStyleId==='custom'?String(customArtStyle||'').trim():art.prompt;
-  const basePrompt=`Create a premium professional visual for Recykal marketing. SUBJECT: ${prompt}. ART DIRECTION: ${styleText||'choose an appropriate editorial visual medium'}. THEME CONTEXT: ${theme.name}; use its mood and approved Recykal palette subtly, not as a literal color wash. No text, no logos, no watermarks. Avoid generic sustainability clichés unless directly relevant. Preserve factual plausibility and professional production quality.`;
+  const art=getArtStyle(artStyleId); const cleanPalette=normalizeProjectPalette(projectPalette); const theme=getTheme(themeId,cleanPalette); const styleText=artStyleId==='custom'?String(customArtStyle||'').trim():art.prompt;
+  const basePrompt=`Create a premium professional visual for Recykal marketing. SUBJECT: ${prompt}. ART DIRECTION: ${styleText||'choose an appropriate editorial visual medium'}. THEME CONTEXT: ${theme.name}; ${cleanPalette.length?`project palette ${cleanPalette.join(', ')} is the preferred accent palette`:'use the approved Recykal palette subtly'}, not as a literal color wash. No text, no logos, no watermarks. Avoid generic sustainability clichés unless directly relevant. Preserve factual plausibility and professional production quality.`;
   // When style references are supplied, use the Responses image-generation tool so the model can inspect the moodboard images.
   if(referencePaths?.length){
     try{

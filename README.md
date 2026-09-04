@@ -1,3 +1,9 @@
+
+## v1.1.5 — Page-safe incremental generation
+
+This release fixes long-document generation failures caused by one very large structured JSON response. The Studio now generates one page/slide at a time, validates each structured response independently, retries a failed page up to three times with progressively smaller response constraints, checkpoints every completed page to the project store, and exposes a saved partial draft if a later page cannot recover. Raw JSON parser errors are no longer shown to marketing users.
+
+For long projects, whole-project AI rewrite during automatic QC is disabled; QC remains active, but the Studio will not risk regenerating a 30+ page project as one large JSON payload. Source content is selected page-by-page using relevant and sequential excerpts, so file-based Preserve mode remains source-aware without sending the entire source into every page request.
 # Long Form Design Studio — Recykal
 
 ## v1.1.3 Render build hardening
@@ -165,3 +171,11 @@ The build workspace could not reach the public npm registry, so `npm install`/th
 ## v1.1.3 print-profile simplification
 
 Per current production scope, the Print PDF profile no longer generates bleed, TrimBox/BleedBox metadata or crop/printer marks. It remains distinct from Digital PDF through CMYK conversion, embedded-font validation, raster-resolution validation and rendered visual preflight.
+
+
+## v1.1.5 — source basket + optional project palette
+
+- **Multiple source files:** Upload & Design accepts up to 10 PDF, Word, PowerPoint, Excel or CSV files in one project. Files can be added in separate selection/drop actions; the source basket is re-aggregated safely.
+- **Remove wrong attachment:** Every attached source file has a remove action before generation. Removing one file keeps the remaining files and rebuilds the authoritative source aggregate; removing the last file resets the source attachment state.
+- **Optional project palette:** Users can paste/add up to 8 six-digit HEX colours. Leaving the palette empty uses the selected Recykal theme. A supplied project palette overrides project design accents/data/visual fields while the Recykal logo artwork, logo proportions and Poppins typography remain locked.
+- **Editable after generation:** The Visual System inspector exposes the same project-palette controls, so colours can be added/removed after generation and the project can then be recomposed without changing factual content.
