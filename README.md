@@ -1,6 +1,8 @@
 # Long Form Design Studio
 
-**Current release: v1.2.3 — Durable Resume, Source Integrity & Cost Control.** See `docs/v1.2.3-durable-resume-source-integrity.md`. - Recykal
+**Current release: v1.3.0 — Editorial Publishing Engine.** See `docs/v1.3.0-editorial-publishing-engine.md`. — Recykal
+
+This release upgrades long-form composition from generic page templates to semantic publication roles, fixes source PDF column/TOC/glossary interpretation, adds source-image reuse, and adds stricter editorial preflight for accidental blank pages, truncated headings, broken ligatures, raw TOC fragments and malformed reference tables.
 
 Release candidate **v1.2.1** adds source-faithful Preserve-mode allocation, removes the false A4 page-budget stop, strengthens source coverage QC, and fixes the repeated/under-filled PDF layouts found in the Goa DRS test.
 
@@ -8,7 +10,7 @@ See `docs/v1.2.1-source-fidelity-layout-fix.md`.
 
 # Long Form Design Studio
 
-**Current release: v1.2.3 — Durable Resume, Source Integrity & Cost Control.** See `docs/v1.2.3-durable-resume-source-integrity.md`. — Recykal
+**Current release: v1.3.0 — Editorial Publishing Engine.** See `docs/v1.3.0-editorial-publishing-engine.md`. — Recykal
 
 ## v1.1.8 — Optional exact final document length
 
@@ -76,7 +78,7 @@ This release fixes long-document generation failures caused by one very large st
 For long projects, whole-project AI rewrite during automatic QC is disabled; QC remains active, but the Studio will not risk regenerating a 30+ page project as one large JSON payload. Source content is selected page-by-page using relevant and sequential excerpts, so file-based Preserve mode remains source-aware without sending the entire source into every page request.
 # Long Form Design Studio
 
-**Current release: v1.2.3 — Durable Resume, Source Integrity & Cost Control.** See `docs/v1.2.3-durable-resume-source-integrity.md`. — Recykal
+**Current release: v1.3.0 — Editorial Publishing Engine.** See `docs/v1.3.0-editorial-publishing-engine.md`. — Recykal
 
 ## v1.1.3 Render build hardening
 
@@ -91,7 +93,7 @@ The Docker image now uses `npm install --include=dev` (the previous `--omit=dev=
 
 # Long Form Design Studio
 
-**Current release: v1.2.3 — Durable Resume, Source Integrity & Cost Control.** See `docs/v1.2.3-durable-resume-source-integrity.md`. — Recykal
+**Current release: v1.3.0 — Editorial Publishing Engine.** See `docs/v1.3.0-editorial-publishing-engine.md`. — Recykal
 
 Native internal AI design platform for the Recykal Marketing Team. Gamma is a product/UX benchmark only; this application has no Gamma API dependency.
 

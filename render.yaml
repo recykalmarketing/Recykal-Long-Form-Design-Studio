@@ -15,11 +15,17 @@ services:
       - key: OPENAI_PAGE_TIMEOUT_MS
         value: "120000"
       - key: OPENAI_PROMPT_CACHE_KEY
-        value: lfds-v1.2.3-layout-engine
+        value: lfds-v1.3.0-editorial-layout
       - key: AUTO_GENERATE_IMAGES
         value: "true"
       - key: AUTO_ANALYZE_FOCAL_POINT
         value: "false"
+      - key: EXTRACT_PDF_IMAGES
+        value: "true"
+      - key: PDF_IMAGE_EXTRACT_LIMIT
+        value: "36"
+      - key: SKIP_AI_QC_ON_STRUCTURAL_FAIL
+        value: "true"
       - key: AUTO_QC
         value: "true"
       - key: QC_MAX_REVISIONS

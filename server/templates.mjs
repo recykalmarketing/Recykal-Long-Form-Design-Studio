@@ -4,7 +4,7 @@ export const TEMPLATES = [
     name:'Editorial Report',
     type:'document',
     description:'Premium long-form report with strong reading rhythm, multi-column narrative, evidence pages and image-led pauses.',
-    sequence:['cover','editorial','two-column','image-led','stat','chart','editorial','quote','table','closing'],
+    sequence:['cover','toc','section-opener','editorial','two-column','data-story','image-led','summary','table','closing'],
     guidance:'Use a 6-column A4 editorial grid. Prefer 2-column body copy for dense narrative, full-width headings, image-led pauses, restrained stat panels and generous but purposeful whitespace. Aim for 68–88% meaningful page occupancy except intentional divider/pause pages.'
   },
   {
@@ -12,7 +12,7 @@ export const TEMPLATES = [
     name:'ESG / Sustainability Report',
     type:'document',
     description:'Visual sustainability publication with narrative, metrics, flows, timelines and evidence-rich data pages.',
-    sequence:['cover','editorial','stat','process','image-led','timeline','chart','two-column','table','closing'],
+    sequence:['cover','toc','section-opener','editorial','stat','process','data-story','case-study','two-column','table','closing'],
     guidance:'Balance evidence with explanation. Use process flows, timelines, stat dashboards, maps/diagrams where relevant, image-led contextual pages and data tables. Avoid sustainability clichés and decorative greenwashing.'
   },
   {
@@ -20,7 +20,7 @@ export const TEMPLATES = [
     name:'Policy Handbook',
     type:'document',
     description:'Government-ready handbook with disciplined hierarchy, process diagrams, timelines, structured tables and citations.',
-    sequence:['cover','editorial','two-column','process','timeline','comparison','table','chart','editorial','closing'],
+    sequence:['cover','message','toc','glossary','section-opener','two-column','process','comparison','data-story','table','summary','closing'],
     guidance:'Credibility first. Use restrained color, clear section hierarchy, compact tables, precise process/timeline visuals, side notes and citations. Keep paragraphs readable and never beautify away nuance.'
   },
   {
@@ -28,7 +28,7 @@ export const TEMPLATES = [
     name:'Annual Report',
     type:'document',
     description:'Business publication with company narrative, leadership, performance dashboards, market visuals, tables and closing pages.',
-    sequence:['cover','quote','editorial','stat','chart','two-column','timeline','comparison','table','image-led','closing'],
+    sequence:['cover','message','toc','section-opener','editorial','stat','data-story','two-column','timeline','comparison','profile','table','closing'],
     guidance:'Use varied but coherent page roles: opening statement, leadership message, company facts, stat dashboard, financial chart/table, timeline, team/market sections and closing. Use rules, columns and visual anchors to avoid poster-like repetition.'
   },
   {
@@ -36,7 +36,7 @@ export const TEMPLATES = [
     name:'Research / Thought Leadership',
     type:'document',
     description:'Evidence-led publication for research, insights and thought leadership.',
-    sequence:['cover','editorial','two-column','chart','table','quote','comparison','editorial','closing'],
+    sequence:['cover','toc','section-opener','editorial','two-column','data-story','table','quote','comparison','summary','closing'],
     guidance:'Use research structure and restrained visual hierarchy. Preserve methodology and citations. Charts and tables must answer specific analytical questions. Use callouts only to aid navigation and synthesis.'
   },
   {
@@ -44,7 +44,7 @@ export const TEMPLATES = [
     name:'Case Study',
     type:'document',
     description:'Problem-to-outcome narrative with evidence, design/business decisions and measurable results.',
-    sequence:['cover','editorial','comparison','process','image-led','stat','chart','quote','closing'],
+    sequence:['cover','section-opener','editorial','comparison','process','case-study','image-led','stat','data-story','quote','summary','closing'],
     guidance:'Use the arc Problem → Context → Evidence → Insight → Decision → Validation → Outcome → Learning. Never invent impact. Visually distinguish evidence, decision and outcome.'
   },
   {

@@ -15,7 +15,7 @@ export const projectSchema = {
           title: { type: 'string' },
           layout: {
             type: 'string',
-            enum: ['cover', 'editorial', 'two-column', 'stat', 'quote', 'timeline', 'comparison', 'process', 'table', 'chart', 'image-led', 'closing']
+            enum: ['cover', 'section-opener', 'message', 'toc', 'glossary', 'editorial', 'editorial-sidebar', 'two-column', 'stat', 'quote', 'timeline', 'comparison', 'process', 'table', 'chart', 'data-story', 'case-study', 'summary', 'profile', 'image-led', 'closing']
           },
           blocks: {
             type: 'array',
@@ -101,7 +101,7 @@ export const outlineSchema = {
   properties:{
     title:{type:'string'}, strategy:{type:'string'},
     items:{type:'array',items:{type:'object',additionalProperties:false,required:['title','role','layout','visualTreatment','purpose'],properties:{
-      title:{type:'string'}, role:{type:'string'}, layout:{type:'string',enum:['cover','editorial','two-column','stat','quote','timeline','comparison','process','table','chart','image-led','closing']}, visualTreatment:{type:'string'}, purpose:{type:'string'}
+      title:{type:'string'}, role:{type:'string'}, layout:{type:'string',enum:['cover','section-opener','message','toc','glossary','editorial','editorial-sidebar','two-column','stat','quote','timeline','comparison','process','table','chart','data-story','case-study','summary','profile','image-led','closing']}, visualTreatment:{type:'string'}, purpose:{type:'string'}
     }}}
   }
 };

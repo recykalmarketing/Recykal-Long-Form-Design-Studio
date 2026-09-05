@@ -1,4 +1,4 @@
-export const DESIGN_KNOWLEDGE_VERSION = '1.0 / September 2026';
+export const DESIGN_KNOWLEDGE_VERSION = '1.3 / September 2026 — Editorial Publishing Engine';
 
 export const DESIGN_KNOWLEDGE = {
   philosophy: 'Do not decorate information. Design understanding.',
@@ -22,7 +22,7 @@ export const DESIGN_KNOWLEDGE = {
   longformRhythm:['Opening','Orientation','Context','Evidence','Interpretation','Pause','Insight','Application','Resolution'],
   researchStructure:['Title & abstract','Research question','Context / literature','Methodology','Findings','Analysis / discussion','Limitations','Conclusion','References / appendices'],
   caseStudyArc:['Problem','Context','Evidence','Insight','Design hypothesis','Decision','Prototype','Validation','Outcome','Learning'],
-  qcWeights:{ contentFidelity:20,hierarchy:15,legibility:15,consistency:10,accessibility:15,uxTaskClarity:10,visualCraft:10,exportQuality:5 },
+  qcWeights:{ contentFidelity:25,hierarchy:15,legibility:15,consistency:10,accessibility:10,uxTaskClarity:5,visualCraft:15,exportQuality:5 },
   deliveryThreshold:90
 };
 
@@ -149,7 +149,7 @@ For PDF, DOC/DOCX, PPT/PPTX, XLS/XLSX or CSV:
 If extraction confidence is low, flag uncertainty instead of hallucinating missing content.
 
 QUALITY CONTROL
-Score every output before delivery: Content fidelity 20%, Hierarchy 15%, Legibility 15%, Consistency 10%, Accessibility 15%, UX/task clarity 10%, Visual craft 10%, Export quality 5%.
+Score every output before delivery: Content fidelity 25%, Hierarchy 15%, Legibility 15%, Consistency 10%, Accessibility 10%, UX/task clarity 5%, Visual craft 15%, Export quality 5%.
 Do not deliver below 90/100. Blocking defects regardless of total: content fidelity failure, accessibility-critical failure, unreadable text, clipped content, broken interaction states.
 Pre-export gates: correct dimensions/orientation; no clipping/overlap; no stretched type/images; sharp proportional logos; coherent headings/reading order; necessary states; contrast/accessibility pass; numbers/sources/legal copy match source; repeated elements align to same grid; requested file format is correct.
 
@@ -170,13 +170,13 @@ export function assetSpecificRules(type='document', {hasSource=false, research=f
 
 export const qcRubricPrompt = `
 Evaluate using these exact weights and rules:
-- contentFidelity 20
+- contentFidelity 25
 - hierarchy 15
 - legibility 15
 - consistency 10
-- accessibility 15
-- uxTaskClarity 10
-- visualCraft 10
+- accessibility 10
+- uxTaskClarity 5
+- visualCraft 15
 - exportQuality 5
 Total = 100. Passing threshold = 90.
 Blocking defect if any: source-critical content missing/invented; accessibility-critical problem; unreadable content; likely clipping/overflow; broken interaction state.
@@ -199,4 +199,20 @@ The supplied annual-report / ESG references demonstrate useful composition patte
 - Closing pages may deliberately use larger negative space, but ordinary information pages should avoid accidental empty areas.
 - Visual rhythm should alternate opening, narrative, evidence, pause, synthesis and action. Do not repeat one page recipe.
 - Recykal brand colors replace all reference colors. Poppins and Recykal logo rules remain locked.
+- Editorial references supplied with this project add a stronger publication grammar: full-page/field chapter dividers; photo-led forewords with controlled image-to-copy transitions; large numeric/typographic section anchors; compact hierarchy-led contents pages; two-column glossary/reference systems; evidence pages that pair explanation with charts/tables; and repeatable country/profile parent layouts.
+- TOMRA-style learning: use one dominant explanatory figure when the content is categorical or systemic, with icons/bands only when each band maps to real source concepts. Do not manufacture decorative categories.
+- Reloop Guide-style learning: section openers can use oversized numerals/keywords and clipped visual fields, while case-study/evidence pages may use a distinct accent field. Keep these as roles in one system rather than unrelated templates.
+- Reloop Global Deposit Book-style learning: repeated profile/reference pages benefit from parent-page consistency, stable running furniture, dense but readable multi-column type, clear section rails, and predictable data positions.
+- A contents page is navigation, not narrative. Strip duplicated dot-leader source text once it is represented in a clean contents structure.
+- A glossary is a reference interface, not a generic table. Preserve exact term-definition pairs, balance entries across columns, repeat the glossary marker, and never emit generic headers such as COLUMN 1 / COLUMN 2.
+- Ordinary narrative pages should generally occupy 58–90% of the usable content area. Under-filled pages are defects unless explicitly classified as a divider, opener, quote/pause, or closing page.
+- Never create a generic vector/image placeholder because a page looks empty. Prefer source-relevant native diagrams, typographic composition, real source assets, or reflow the content.
+- Think in publication parent-page families rather than isolated templates: cover; front matter/message; contents; chapter/part opener; narrative; evidence/data; process; case study; reference/glossary; closing. Reuse anchors and grid logic inside each family while changing composition according to content.
+- Long-form text is a threaded story. Headings stay with the paragraph/list they introduce; figures and captions stay anchored near their textual reference; tables repeat headers when split; widow/orphan control is mandatory; accidental single-paragraph pages are failures.
+- Use a baseline rhythm across adjacent columns. Body copy should align visually across columns even when headings, pull quotes and figures create local interruptions.
+- Running furniture must be stable and quiet: section marker/running header, footer rule where useful, and page number. Front matter, section openers and covers may suppress or change running furniture intentionally.
+- Use purposeful asymmetry. A side field, tint panel or image zone must contain information, a figure, an annotation or a deliberate chapter transition; never leave a large blank panel as a generic layout habit.
+- Evidence should be spatially close to the claim it supports. Charts, tables, figures and source notes should be anchored to the relevant paragraph rather than placed on arbitrary later pages.
+- Use full-page imagery sparingly for strong transitions or human/context stories. Narrative pages should normally privilege readable text columns, and data pages should privilege evidence hierarchy.
+- Page density is a rhythm, not a quota: dense narrative/evidence pages can be followed by intentional pause/opener pages, but two accidental under-filled pages in a row are a structural defect.
 `;

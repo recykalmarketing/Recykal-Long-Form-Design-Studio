@@ -32,7 +32,7 @@ function normalizeFrame(frame={}){
   return {freeform:Boolean(frame.freeform),x:clamp(frame.x,0,96,6),y:clamp(frame.y,0,96,12),w:clamp(frame.w,4,100,88),h:frame.autoHeight!==false?clamp(frame.h,4,100,18):clamp(frame.h,4,100,18),autoHeight:frame.autoHeight!==false,z:Math.round(clamp(frame.z,0,100,1))};
 }
 function normalizeSurface(surface={}){
-  const modes=new Set(['plain','top-band','side-panel','data-band','quote-panel','split-tint','chapter-field','dark','soft-grid']);
+  const modes=new Set(['plain','top-band','side-panel','data-band','quote-panel','split-tint','chapter-field','dark','soft-grid','section-rail','editorial-field','case-field']);
   return {mode:modes.has(surface?.mode)?surface.mode:'plain',role:['primary','secondary','accent','dark','surface'].includes(surface?.role)?surface.role:'surface',intensity:clamp(surface?.intensity,0,1,.12)};
 }
 
@@ -73,6 +73,7 @@ function normalizePage(page={}) {
     locked: Boolean(page.locked),
     continuationBatchId: page.continuationBatchId || null,
     continuationBatchNumber: Number.isFinite(Number(page.continuationBatchNumber)) ? Number(page.continuationBatchNumber) : null,
+    sourceRef: page.sourceRef && typeof page.sourceRef==='object' ? {...page.sourceRef} : null,
     surface: normalizeSurface(page.surface||{})
   };
 }
@@ -161,24 +162,32 @@ function textWeight(page={}) {
   return (page.blocks||[]).reduce((n,b)=>n+(b.text||'').length+(b.items||[]).join(' ').length+(b.tableRows||[]).flat().join(' ').length,0);
 }
 function inferLayout(page={}, index=0, total=1) {
-  const title=String(page.title||'').toLowerCase(); const blocks=page.blocks||[];
+  const title=String(page.title||'').toLowerCase(); const blocks=page.blocks||[]; const joined=blocks.map(b=>`${b.text||''} ${(b.items||[]).join(' ')}`).join(' ').toLowerCase();
   if(index===0) return 'cover';
   if(index===total-1 && /thank|closing|conclusion|contact|next step/.test(title)) return 'closing';
+  if(/table of contents|^contents\b/.test(title)) return 'toc';
+  if(/^glossary\b/.test(title)) return 'glossary';
+  if(/\b(message|foreword)\b/.test(title)||/chief minister|chief secretary|chairperson/.test(joined.slice(0,700))) return 'message';
+  if(/^(part|chapter|section|appendix|annexure)\b/.test(title) && textWeight(page)<850) return 'section-opener';
+  if(/case study|case-study/.test(title)) return 'case-study';
+  if(/summary|key takeaways|in summary/.test(title) && textWeight(page)<1200) return 'summary';
+  if(/profile|country|jurisdiction/.test(title) && blocks.some(b=>b.type==='table'||b.type==='stat')) return 'profile';
   if(blocks.some(b=>b.type==='table')) return 'table';
-  if(blocks.some(b=>b.type==='chart')) return 'chart';
+  if(blocks.some(b=>b.type==='chart')) return blocks.some(b=>b.type==='paragraph')?'data-story':'chart';
   const stats=blocks.filter(b=>b.type==='stat').length;
   const bullets=blocks.find(b=>b.type==='bullets');
   if(/timeline|history|journey|evolution|milestone/.test(title)) return 'timeline';
-  if(/process|how .*works|workflow|steps|pathway|roadmap|implementation/.test(title) || (bullets?.items?.length>=3 && bullets.items.length<=7 && /how|process|step|flow|journey/.test((page.blocks.find(b=>b.type==='heading')?.text||'').toLowerCase()))) return 'process';
+  if(/process|how .*works|workflow|steps|pathway|roadmap|implementation|architecture/.test(title) || (bullets?.items?.length>=3 && bullets.items.length<=8 && /how|process|step|flow|journey/.test(joined))) return 'process';
   if(/compare|comparison|versus|vs\.|difference|options|goals|aspirations/.test(title)) return 'comparison';
   if(stats>=2) return 'stat';
   if(blocks.some(b=>b.type==='quote') && textWeight(page)<850 && blocks.filter(b=>b.type==='paragraph').length<=1) return 'quote';
   if(blocks.some(b=>b.type==='image') && textWeight(page)<1150) return 'image-led';
   if(textWeight(page)>1300 || blocks.filter(b=>b.type==='paragraph').length>=3) return 'two-column';
+  if(blocks.some(b=>b.type==='bullets') && blocks.filter(b=>b.type==='paragraph').length>=1) return 'editorial-sidebar';
   return page.layout && page.layout!=='editorial' ? page.layout : 'editorial';
 }
 function pageCapacity(layout='editorial'){
-  return ({cover:620,editorial:760,'two-column':1380,stat:760,quote:700,timeline:760,comparison:760,process:760,table:760,chart:760,'image-led':700,closing:620})[layout]||760;
+  return ({cover:620,'section-opener':720,message:1080,toc:1120,glossary:1450,editorial:820,'editorial-sidebar':940,'two-column':1500,stat:820,quote:700,timeline:820,comparison:820,process:850,table:980,chart:820,'data-story':960,'case-study':900,summary:820,profile:1150,'image-led':760,closing:620})[layout]||820;
 }
 function blockUnits(block={},layout='editorial'){
   const two=layout==='two-column';
@@ -190,7 +199,7 @@ function blockUnits(block={},layout='editorial'){
   if(block.type==='quote')return 70+Math.ceil(text.length/58)*22;
   if(block.type==='bullets')return 18+(block.items||[]).reduce((n,x)=>n+Math.max(28,Math.ceil(String(x).length/(two?38:68))*17+8),0);
   if(block.type==='stat')return 118;
-  if(block.type==='image')return layout==='image-led'?390:260;
+  if(block.type==='image')return ['image-led','message','case-study'].includes(layout)?360:240;
   if(block.type==='chart')return 280;
   if(block.type==='table')return 38+Math.max(1,(block.tableRows||[]).length)*31;
   return 40;
@@ -248,19 +257,23 @@ export function enforceA4DocumentPages(project){
 function inferSurfaceTreatment(page={},index=0,total=1){
   if(page.surface?.mode&&page.surface.mode!=='plain')return normalizeSurface(page.surface);
   const layout=page.layout||'editorial';const title=String(page.title||'').toLowerCase();
-  if(layout==='cover')return {mode:'chapter-field',role:'secondary',intensity:.16};
+  if(layout==='cover')return {mode:'editorial-field',role:'primary',intensity:.16};
   if(layout==='closing')return {mode:'dark',role:'dark',intensity:1};
-  if(layout==='stat')return {mode:'data-band',role:'primary',intensity:.11};
+  if(layout==='section-opener')return {mode:'section-rail',role:'primary',intensity:.18};
+  if(layout==='message')return {mode:'editorial-field',role:'surface',intensity:.10};
+  if(layout==='toc'||layout==='glossary'||layout==='profile')return {mode:'section-rail',role:'surface',intensity:.10};
+  if(layout==='case-study')return {mode:'case-field',role:'secondary',intensity:.12};
+  if(layout==='data-story'||layout==='stat')return {mode:'data-band',role:'primary',intensity:.11};
   if(layout==='quote')return {mode:'quote-panel',role:'accent',intensity:.10};
   if(layout==='image-led')return {mode:'split-tint',role:'surface',intensity:.18};
-  if(layout==='timeline'||layout==='process')return {mode:'side-panel',role:layout==='timeline'?'primary':'secondary',intensity:.08};
-  if(layout==='table'||layout==='chart')return {mode:'top-band',role:'surface',intensity:.22};
-  if(/chapter|section|part\s+\d|overview|preliminary|appendix/.test(title))return {mode:'chapter-field',role:'primary',intensity:.09};
+  if(layout==='timeline'||layout==='process'||layout==='editorial-sidebar')return {mode:'side-panel',role:layout==='timeline'?'primary':'secondary',intensity:.08};
+  if(layout==='table'||layout==='chart')return {mode:'top-band',role:'surface',intensity:.18};
+  if(/chapter|section|part\s+\d|overview|preliminary|appendix|annexure/.test(title))return {mode:'chapter-field',role:'primary',intensity:.09};
   return {mode:'plain',role:'surface',intensity:0};
 }
 
 function applyLayoutIntelligence(project) {
-  const allowed=new Set(['cover','editorial','two-column','stat','quote','timeline','comparison','process','table','chart','image-led','closing']);
+  const allowed=new Set(['cover','section-opener','message','toc','glossary','editorial','editorial-sidebar','two-column','stat','quote','timeline','comparison','process','table','chart','data-story','case-study','summary','profile','image-led','closing']);
   let prev=''; let run=0;
   project.pages=(project.pages||[]).map((p,i)=>{
     let layout=allowed.has(p.layout)?p.layout:inferLayout(p,i,project.pages.length);
@@ -274,12 +287,12 @@ function applyLayoutIntelligence(project) {
 }
 
 function tokenSet(text=''){return new Set(String(text).toLowerCase().replace(/[^a-z0-9 ]/g,' ').split(/\s+/).filter(x=>x.length>3))}
-function assetScore(asset, page, block){const a=tokenSet(`${asset.name||''} ${asset.url||''}`),q=tokenSet(`${page.title||''} ${block.imagePrompt||''}`);let score=0;for(const t of q)if(a.has(t))score++;return score}
+function assetScore(asset, page, block){const a=tokenSet(`${asset.name||''} ${asset.originalPath||''} ${asset.url||''}`),q=tokenSet(`${page.title||''} ${block.imagePrompt||''} ${block.altText||''}`);let score=0;for(const t of q)if(a.has(t))score++;const sourceIndex=Number(page?.sourceRef?.index||0),sourceEnd=Number(page?.sourceRef?.endIndex||sourceIndex||0),assetPage=Number(asset?.pageNumber||0);if(sourceIndex&&assetPage&&assetPage>=sourceIndex&&assetPage<=sourceEnd)score+=12;else if(sourceIndex&&assetPage&&Math.abs(assetPage-sourceIndex)===1)score+=2;return score}
 async function materializeAutoImages(project, onProgress=null) {
   const source=project.settings?.imageSource||'mixed';
   if(['none','placeholder'].includes(source)) return project;
   const ai=client();
-  const style=project.settings?.deckStyle||'auto'; const defaults={visual:10,classic:6,consultant:3,minimal:2,auto:6};
+  const style=project.settings?.deckStyle||'auto'; const defaults={visual:7,classic:5,consultant:3,minimal:2,auto:4};
   const configured=process.env.AUTO_IMAGE_LIMIT?Number(process.env.AUTO_IMAGE_LIMIT):defaults[style]||6;
   const max=Math.max(0,Math.min(14,configured));
   const candidates=[];
@@ -425,7 +438,7 @@ async function structuredResponse({ input, schema, name, research=false, maxOutp
         input,
         max_output_tokens: Math.max(2500,Math.min(32000,Number(maxOutputTokens)||16000)),
         text: { format: { type:'json_schema', name, schema, strict:true } },
-        prompt_cache_key: cacheKey||process.env.OPENAI_PROMPT_CACHE_KEY||'lfds-v1.2.3-layout-engine'
+        prompt_cache_key: cacheKey||process.env.OPENAI_PROMPT_CACHE_KEY||'lfds-v1.3.0-editorial-layout'
       };
       if (research) request.tools = [{ type:'web_search' }];
       const response = await ai.responses.create(request,{signal,timeout:requestTimeout});
@@ -560,6 +573,51 @@ function orderedSourceSegments(parsedFile={}){
     filename:s.filename||parsedFile.filename||'Source',kind:s.kind||parsedFile.kind||'source',index:Number(s.index)||i+1,title:s.title||'',text:String(s.text||'').trim()
   })).sort((a,b)=>String(a.filename).localeCompare(String(b.filename))||a.index-b.index);
 }
+function looksLikeTocText(text=''){
+  const t=String(text||''),lines=t.split(/\n+/).map(x=>x.trim()).filter(Boolean);
+  if(/table of contents|(?:^|\n)contents(?:\s*[—-]\s*continued)?\b/i.test(t))return true;
+  const dots=(t.match(/\.{4,}/g)||[]).length;
+  const chapter=(t.match(/\bchapter\s+\d+\b/gi)||[]).length;
+  const part=(t.match(/\bpart\s+[ivxlcdm\d]+\b/gi)||[]).length;
+  const annex=(t.match(/\bannex(?:ure|ex)\s+[a-z0-9]+/gi)||[]).length;
+  const pageish=lines.filter(x=>/(?:\.{3,}|\s)\d{1,4}\s*$/.test(x)).length;
+  const narrative=lines.filter(x=>/[.!?]$/.test(x)&&x.length>70).length;
+  return dots>=3 || ((chapter+part+annex)>=4 && pageish>=3 && narrative<=2) || (pageish>=7&&narrative<=1);
+}
+function looksLikeGlossaryText(text=''){
+  const t=String(text||'');if(looksLikeTocText(t))return false;
+  if(/(?:^|\n)glossary(?:\s*[—-]\s*continued)?\b/i.test(t)||/(?:^|\n)term\s+(?:meaning|definition)\b/i.test(t))return true;
+  const pairs=t.split(/\n+/).map(x=>x.trim()).filter(Boolean).map(line=>line.split(/\t+/).map(x=>x.trim())).filter(c=>c.length>=2&&c[0].length>=2&&c[0].length<=78&&c.slice(1).join(' ').length>=24&&!/^\d+$/.test(c[0]));
+  if(pairs.length<4)return false;
+  const avgLeft=pairs.reduce((n,c)=>n+c[0].length,0)/pairs.length,avgRight=pairs.reduce((n,c)=>n+c.slice(1).join(' ').length,0)/pairs.length;
+  return avgLeft<52&&avgRight>avgLeft*1.15&&!/(?:^|\n)(?:chapter\s+\d+|part\s+[ivxlcdm\d]+)\b/i.test(t);
+}
+function logicalSourceSegments(parsedFile={}){
+  const raw=orderedSourceSegments(parsedFile),out=[];
+  for(const [segIndex,seg] of raw.entries()){
+    const role=looksLikeTocText(seg.text)?'toc':looksLikeGlossaryText(seg.text)?'glossary':sourceSliceArchetype({text:seg.text,title:seg.title||''},segIndex,raw.length);
+    const prev=out.at(-1);
+    const sparseWords=(String(seg.text||'').match(/\S+/g)||[]).length;
+    const structural=/^(?:\s*)(?:message|foreword|executive summary|part\s+[ivxlcdm\d]+|chapter\s+\d+|section\s+\d+|appendix|annexure|table of contents|contents|glossary)\b/i.test(String(seg.text||''));
+    const mergeReference=prev&&prev.filename===seg.filename&&['toc','glossary'].includes(role)&&prev.logicalRole===role;
+    const mergeSparse=prev&&prev.filename===seg.filename&&sparseWords<140&&!structural&&!['cover','toc','glossary','message','section-opener'].includes(prev.logicalRole)&&!['toc','glossary','message','section-opener'].includes(role);
+    if(mergeReference||mergeSparse){prev.text=`${prev.text}\n\n${seg.text}`;prev.sourceEndIndex=seg.index;prev.title=prev.title||seg.title;continue;}
+    out.push({...seg,sourceEndIndex:seg.index,logicalRole:role});
+  }
+  return out;
+}
+function recommendedPreservePageCount(parsedFile={}){
+  const segs=logicalSourceSegments(parsedFile);if(!segs.length)return 0;
+  let count=0;
+  for(const seg of segs){const role=seg.logicalRole||sourceSliceArchetype({text:seg.text,title:seg.title||''},0,segs.length),words=(String(seg.text||'').match(/\S+/g)||[]).length;
+    if(role==='toc'){const rows=extractTocRows(seg.text).length;count+=Math.max(1,Math.ceil(Math.max(rows,1)/24));continue;}
+    if(role==='glossary'){const rows=extractGlossaryRows(seg.text).length;const byRows=Math.ceil(Math.max(rows,1)/10),byText=Math.ceil(Math.max(String(seg.text||'').length,1)/6200);count+=Math.max(1,byRows,byText);continue;}
+    const cap=role==='message'?760:role==='data-story'||role==='process'?560:role==='section-opener'?900:720;
+    count+=Math.max(1,Math.ceil(Math.max(words,1)/cap));
+  }
+  return Math.max(1,Math.min(500,count));
+}
+
 function splitTextIntoParts(text='',parts=1){
   const clean=String(text||'').trim(); if(parts<=1||!clean)return [clean];
   // Prefer paragraph/sentence boundaries, then words. Never cut a word or number.
@@ -587,8 +645,8 @@ function splitTextIntoParts(text='',parts=1){
 function deriveSourceTitle(text='',sourceIndex=1,part=1,parts=1){
   const lines=String(text||'').split(/\n+/).map(x=>x.trim()).filter(Boolean);
   const low=lines.map(x=>x.toLowerCase());let title='';
-  const toc=lines.find(x=>/^(table of contents|contents)(\s*[—-]\s*continued)?$/i.test(x));if(toc)title=part>1?'Table of contents — continued':'Table of contents';
-  const glossary=lines.find(x=>/^glossary(\s*[—-]\s*continued)?$/i.test(x));if(!title&&glossary)title=part>1?'Glossary — continued':'Glossary';
+  const toc=looksLikeTocText(text);if(toc)title=part>1?'Table of contents — continued':'Table of contents';
+  const glossary=looksLikeGlossaryText(text);if(!title&&glossary)title=part>1?'Glossary — continued':'Glossary';
   const drs=lines.find(x=>/deposit refund scheme/i.test(x)&&x.length<120);if(!title&&drs&&sourceIndex===1)title=drs;
   if(!title){const mi=low.findIndex(x=>x==='message'||x.endsWith(' message'));if(mi>=0){title=lines.slice(mi+1).find(x=>x.length>=8&&x.length<100&&!/^(preliminary|message)$/i.test(x))||'';}}
   if(!title){const fi=low.findIndex(x=>x==='foreword');if(fi>=0)title=lines.slice(fi+1).find(x=>x.length>=8&&x.length<100)||'Foreword';}
@@ -600,13 +658,13 @@ function deriveSourceTitle(text='',sourceIndex=1,part=1,parts=1){
   return title.slice(0,140);
 }
 function allocateSourceSlices(parsedFile={},targetPages=null){
-  const segs=orderedSourceSegments(parsedFile); if(!segs.length)return [];
+  const segs=logicalSourceSegments(parsedFile); if(!segs.length)return [];
   const target=Number.isInteger(Number(targetPages))&&Number(targetPages)>0?Number(targetPages):segs.length;
   // When enough output pages are available, every source page gets at least one designed page.
   if(target>=segs.length){
     const counts=Array(segs.length).fill(1);let remaining=target-segs.length;
     while(remaining>0){let best=0,bestScore=-1;for(let i=0;i<segs.length;i++){const score=Math.max(120,segs[i].text.length)/counts[i];if(score>bestScore){bestScore=score;best=i}}counts[best]++;remaining--;}
-    const out=[];segs.forEach((seg,i)=>{const parts=splitTextIntoParts(seg.text,counts[i]);parts.forEach((txt,j)=>out.push({filename:seg.filename,kind:seg.kind,sourceIndex:seg.index,part:j+1,parts:parts.length,text:txt,title:deriveSourceTitle(txt,seg.index,j+1,parts.length)}));});return out;
+    const out=[];segs.forEach((seg,i)=>{const parts=splitTextIntoParts(seg.text,counts[i]);parts.forEach((txt,j)=>out.push({filename:seg.filename,kind:seg.kind,sourceIndex:seg.index,sourceEndIndex:seg.sourceEndIndex||seg.index,part:j+1,parts:parts.length,text:txt,title:deriveSourceTitle(txt,seg.index,j+1,parts.length)}));});return out;
   }
   // Fewer output pages than source pages: group sequential source pages by cumulative text weight.
   const total=segs.reduce((n,x)=>n+Math.max(120,x.text.length),0),targetWeight=total/target;const out=[];let bucket=[],weight=0;
@@ -616,19 +674,27 @@ function allocateSourceSlices(parsedFile={},targetPages=null){
   while(out.length>target){const last=out.pop();out[out.length-1]={...out[out.length-1],text:`${out[out.length-1].text}\n\n${last.text}`};}
   return out.slice(0,target);
 }
-function preferredLayoutForSourceSlice(slice={},index=0,total=1){
-  const text=String(slice.text||''),low=text.toLowerCase(); if(index===0&&/deposit refund scheme|handbook|report|annual report|government of/i.test(text.slice(0,500)))return 'cover';
-  if(/table of contents|(?:^|\n)contents\b/.test(low))return 'table';
-  if(/^\s*(glossary|term\s+meaning)/im.test(text))return 'table';
-  if(/\b(message|foreword|chief minister|chief secretary|chairperson)\b/.test(low))return text.length>1900?'two-column':'editorial';
-  if(/\b(timeline|chronology|evolution|milestone)\b/.test(low))return 'timeline';
-  if(/\b(sequence|process|workflow|architecture|how .* works|journey)\b/.test(low)&&text.length<1900)return 'process';
-  if(text.length>1750)return 'two-column'; return 'editorial';
+function sourceSliceArchetype(slice={},index=0,total=1){
+  const text=String(slice.text||''),low=text.toLowerCase(),lines=text.split(/\n+/).map(x=>x.trim()).filter(Boolean);
+  if(index===0&&/deposit refund scheme|handbook|report|annual report|government of/i.test(text.slice(0,650)))return 'cover';
+  if(looksLikeTocText(text))return 'toc';
+  if(looksLikeGlossaryText(text))return 'glossary';
+  if(/\b(message|foreword|chief minister|chief secretary|chairperson)\b/i.test(text.slice(0,900)))return 'message';
+  if(/\bcase study\b/i.test(text.slice(0,800)))return 'case-study';
+  const opener=lines.find(x=>/^(part\s+[ivxlcdm\d]+|chapter\s+\d+|section\s+\d+|appendix\b|annexure\b)/i.test(x));
+  if(opener&&text.length<1050)return 'section-opener';
+  if(/\b(timeline|chronology|evolution|milestone)\b/i.test(low))return 'timeline';
+  if(/\b(sequence|process|workflow|architecture|how .* works|journey|material flow|money journey|consumer journey)\b/i.test(low)&&text.length<2200)return 'process';
+  if(/\b(figure|chart|return rate|collection rate|percentage|per cent|%|statistics|data)\b/i.test(low)&&text.length<1800)return 'data-story';
+  if(/\b(summary|key takeaways|in summary)\b/i.test(low)&&text.length<1500)return 'summary';
+  if(text.length>1550)return 'two-column';
+  return 'editorial';
 }
+function preferredLayoutForSourceSlice(slice={},index=0,total=1){return sourceSliceArchetype(slice,index,total);}
 function sourceAwarePlan(planItems=[],options={},target=null){
   if(!options.parsedFile||options.contentMode!=='preserve')return planItems;
   const slices=allocateSourceSlices(options.parsedFile,target||planItems.length||null);if(!slices.length)return planItems;
-  return slices.map((slice,i)=>{const base=planItems[i]||{};const layout=preferredLayoutForSourceSlice(slice,i,slices.length);return {...base,title:slice.title||base.title||`Page ${i+1}`,role:i===0?'opening':base.role||'source-faithful',layout,visualTreatment:base.visualTreatment||'Editorial composition driven by the source content; no decorative filler.',purpose:`Faithfully design source ${slice.filename}, page ${slice.sourceIndex}${slice.parts>1?`, part ${slice.part} of ${slice.parts}`:''}. Preserve all assigned source content.`,sourceRef:{filename:slice.filename,index:slice.sourceIndex,endIndex:slice.sourceEndIndex||slice.sourceIndex,part:slice.part,parts:slice.parts},sourceSliceText:slice.text};});
+  return slices.map((slice,i)=>{const base=planItems[i]||{};const layout=preferredLayoutForSourceSlice(slice,i,slices.length);const treatment={cover:'Publication cover with a content-specific native vector/approved source visual; no generic placeholder.',toc:'Navigation-first contents page with clean hierarchy and right-aligned page references; suppress raw dot-leader duplication.',glossary:'Reference-page system with exact term-definition pairs balanced in editorial columns; no generic table headers.',message:'Leadership/editorial message page with strong lead hierarchy, signature block, and balanced columns; portrait only when a real approved/source image exists.','section-opener':'Intentional chapter/part divider with oversized section marker and restrained continuation copy.',process:'Content-derived native process diagram anchored to explanatory copy.','data-story':'Evidence-led composition pairing source data/figure with concise interpretation.','case-study':'Case-study accent field with evidence, narrative and clearly separated takeaway.',summary:'Synthesis page with strong key takeaway hierarchy.','two-column':'Dense editorial two-column page on a baseline grid with controlled pull-out only when source supports it.',editorial:'Editorial narrative page with a disciplined grid and purposeful hierarchy.'}[layout]||'Editorial source-led composition.';return {...base,title:slice.title||base.title||`Page ${i+1}`,role:i===0?'opening':layout,layout,visualTreatment:treatment,purpose:`Faithfully design source ${slice.filename}, page ${slice.sourceIndex}${slice.parts>1?`, part ${slice.part} of ${slice.parts}`:''}. Preserve all assigned source content and structural relationships.`,sourceRef:{filename:slice.filename,index:slice.sourceIndex,endIndex:slice.sourceEndIndex||slice.sourceIndex,part:slice.part,parts:slice.parts},sourceSliceText:slice.text};});
 }
 function generatedTextForCoverage(page={}){return (page.blocks||[]).flatMap(b=>[b.text||'',...(b.items||[]),b.label||'',b.value||'',b.caption||'',...(b.tableHeaders||[]),...(b.tableRows||[]).flat()]).join(' ');}
 function wordCoverage(source='',output=''){
@@ -641,30 +707,38 @@ function orderedWordCoverage(source='',output=''){
   return hit/src.length;
 }
 function sourceStructureHints(text=''){
-  const low=String(text||'').toLowerCase();return {
-    toc:/table of contents|(?:^|\n)contents\b/.test(low),
-    glossary:/(?:^|\n)glossary\b/.test(low),
-    message:/\b(message|foreword|chief minister|chief secretary|chairperson)\b/.test(low)
-  };
+  const low=String(text||'').toLowerCase();return {toc:looksLikeTocText(text),glossary:looksLikeGlossaryText(text),message:/\b(message|foreword|chief minister|chief secretary|chairperson)\b/.test(low),chapter:/(?:^|\n)(?:chapter\s+\d+|part\s+[ivx\d]+)\b/i.test(text)};
+}
+function cleanStructuralLine(line=''){
+  return String(line||'').replace(/\uFFFD/g,'').replace(/\s+/g,' ').trim();
+}
+function extractTocRows(text=''){
+  const rows=[];const seen=new Set();const normalized=String(text||'').replace(/\n/g,' ');
+  const re=/([^\n]{2,160}?)(?:\.{3,}|\s{3,})(\d{1,4})(?=\s|$)/g;let m;
+  while((m=re.exec(normalized))){let label=cleanStructuralLine(m[1]).replace(/^(?:table of contents|contents|section\s+page)\s*/i,'').trim();label=label.replace(/^\d+\s+(?=chapter\b)/i,'').trim();if(label.length<2)continue;const key=`${label}|${m[2]}`.toLowerCase();if(seen.has(key))continue;seen.add(key);rows.push([label,m[2]]);}
+  if(rows.length<3){for(const raw of String(text||'').split(/\n+/)){const line=cleanStructuralLine(raw);const x=line.match(/^(.{2,140}?)\s+(\d{1,4})$/);if(x&&!/^(page|section)\s+\d+$/i.test(line)){const key=`${x[1]}|${x[2]}`.toLowerCase();if(!seen.has(key)){seen.add(key);rows.push([x[1].trim(),x[2]])}}}}
+  return rows;
+}
+function extractGlossaryRows(text=''){
+  const lines=String(text||'').split(/\n+/).map(x=>x.trim()).filter(Boolean);const rows=[];let cur=null;
+  const skip=/^(glossary(?:\s*[—-]\s*continued)?|term\s+(?:meaning|definition)|column\s+1\s+column\s+2)$/i;
+  const commit=()=>{if(cur&&cur[0]&&cur[1])rows.push([cleanStructuralLine(cur[0]),cleanStructuralLine(cur[1])]);cur=null;};
+  for(const raw of lines){const line=cleanStructuralLine(raw);if(!line||skip.test(line))continue;const cells=raw.split(/\t+/).map(cleanStructuralLine);
+    if(cells.length>=2){const left=cells[0],right=cells.slice(1).join(' ');const leftContinuation=/^\([^)]{2,20}\)$/.test(left)||(/^([A-Z][A-Za-z&/ -]{1,45})$/.test(left)&&cur&&cur[0].length<70&&/\($/.test(cur[0]));if(leftContinuation&&cur){cur[0]+=` ${left}`;cur[1]+=` ${right}`;}else{commit();cur=[left,right];}continue;}
+    if(!cur)continue;const looksTerm=line.length<72&&!/[.!?;:]$/.test(line)&&/^[A-Z0-9(]/.test(line)&&line.split(/\s+/).length<=8;
+    if(looksTerm&&cur[0].length<70&&(/[(/-]$/.test(cur[0])||/^\(/.test(line)))cur[0]+=` ${line}`;else cur[1]+=` ${line}`;
+  }commit();return rows;
 }
 function sourceFallbackBlocks(text='',title='Source'){
-  const lines=String(text||'').split(/\n+/).map(x=>x.trim()).filter(Boolean);const blocks=[];let headingUsed=false,body=[];
-  for(const line of lines){const allCaps=line.length<110&&/[A-Z]/.test(line)&&line===line.toUpperCase();if(!headingUsed&&allCaps&&!line.includes('\t')){if(!blocks.length)blocks.push(normalizeBlock({type:'kicker',text:line}));else blocks.push(normalizeBlock({type:'heading',text:line}));headingUsed=true;continue}body.push(line)}
-  if(!blocks.some(b=>b.type==='heading'))blocks.push(normalizeBlock({type:'heading',text:title}));
-  const tabRows=body.filter(x=>x.includes('\t')).map(x=>x.split(/\t+/).map(c=>c.trim()).filter(Boolean));const low=String(text).toLowerCase();
-  if(tabRows.length>=3){
-    const maxCols=Math.max(...tabRows.map(r=>r.length));const rows=tabRows.filter(r=>r.length>=2).map(r=>{const out=[...r];while(out.length<maxCols)out.push('');return out.slice(0,maxCols)});
-    let headers=[];if(rows.length&&rows[0].some(c=>/^(term|meaning|definition|section|page)$/i.test(c)))headers=rows.shift();
-    if(!headers.length)headers=/glossary|term\s+(?:meaning|definition)/i.test(low)?['TERM','DEFINITION']:/(table of contents|\bcontents\b)/i.test(low)?['SECTION','PAGE']:Array.from({length:maxCols},(_,i)=>`COLUMN ${i+1}`);
-    blocks.push(normalizeBlock({type:'table',tableHeaders:headers,tableRows:rows,caption:''}));const leftovers=body.filter(x=>!x.includes('\t'));if(leftovers.length)for(const part of splitWordsToLimit(leftovers.join(' '),900))blocks.push(normalizeBlock({type:'paragraph',text:part}));return blocks;
-  }
-  if(/table of contents|(?:^|\n)contents\b/i.test(text)){
-    const rows=[],leftovers=[];for(const line of body){const m=line.match(/^(.*?)(?:\.{2,}|\s{2,})(\d+)\s*$/);if(m)rows.push([m[1].trim(),m[2]]);else leftovers.push(line)}
-    if(rows.length>=3){blocks.push(normalizeBlock({type:'table',tableHeaders:['SECTION','PAGE'],tableRows:rows}));if(leftovers.length)for(const part of splitWordsToLimit(leftovers.join(' '),900))blocks.push(normalizeBlock({type:'paragraph',text:part}));return blocks;}
-  }
-  const joined=body.join(' ');for(const part of splitWordsToLimit(joined,900))blocks.push(normalizeBlock({type:'paragraph',text:part}));return blocks;
+  const clean=String(text||'').replace(/\uFFFD/g,'').trim();const hints=sourceStructureHints(clean);const blocks=[];
+  if(hints.toc){blocks.push(normalizeBlock({type:'heading',text:/continued/i.test(title)?'Table of contents — continued':'Table of contents'}));const rows=extractTocRows(clean);if(rows.length)blocks.push(normalizeBlock({type:'table',tableHeaders:['SECTION','PAGE'],tableRows:rows,tableStyle:{variant:'minimal',density:'compact',numericAlign:'right',firstColumnEmphasis:false}}));return blocks;}
+  if(hints.glossary){blocks.push(normalizeBlock({type:'heading',text:/continued/i.test(title)?'Glossary — continued':'Glossary'}));let rows=extractGlossaryRows(clean);if(rows.length<2){const tab=clean.split(/\n+/).filter(x=>x.includes('\t')).map(x=>x.split(/\t+/).map(cleanStructuralLine));rows=tab.filter(r=>r.length>=2).map(r=>[r[0],r.slice(1).join(' ')]);}if(rows.length)blocks.push(normalizeBlock({type:'table',tableHeaders:['TERM','DEFINITION'],tableRows:rows,tableStyle:{variant:'minimal',density:'compact',numericAlign:'left',firstColumnEmphasis:true}}));return blocks;}
+  const lines=clean.split(/\n+/).map(cleanStructuralLine).filter(Boolean);let body=[...lines];
+  const structural=[];for(let i=0;i<Math.min(6,body.length);i++){const line=body[i];if(/^(preliminary|message|foreword|executive summary|chapter\s+\d+|part\s+[ivx\d]+|about this handbook|how to use this handbook)$/i.test(line)||(line===line.toUpperCase()&&line.length<120&&line.split(/\s+/).length<=14))structural.push(line);else break;}
+  body=body.slice(structural.length);if(structural.length){const first=structural[0],labelLike=/^(preliminary|chapter\s+\d+|part\s+[ivx\d]+|section\s+\d+|annexure|appendix)/i.test(first);if(labelLike)blocks.push(normalizeBlock({type:'kicker',text:first}));const heading=labelLike?(structural[1]||title):first;blocks.push(normalizeBlock({type:'heading',text:heading}));for(const extra of structural.slice(labelLike?2:1))blocks.push(normalizeBlock({type:'subheading',text:extra}));}else blocks.push(normalizeBlock({type:'heading',text:title}));
+  const joined=body.join(' ');for(const part of splitWordsToLimit(joined,1100))blocks.push(normalizeBlock({type:'paragraph',text:part}));return blocks;
 }
-function sourceFaithfulFallbackPage(item={},index=0,total=1){const text=String(item.sourceSliceText||'').trim(),layout=preferredLayoutForSourceSlice({text},index,total);return normalizePage({title:item.title||`Page ${index+1}`,layout,blocks:sourceFallbackBlocks(text,item.title||`Page ${index+1}`),speakerNotes:''});}
+function sourceFaithfulFallbackPage(item={},index=0,total=1){const text=String(item.sourceSliceText||'').trim(),layout=preferredLayoutForSourceSlice({text},index,total);return normalizePage({title:item.title||`Page ${index+1}`,layout,blocks:sourceFallbackBlocks(text,item.title||`Page ${index+1}`),speakerNotes:'',sourceRef:item?.sourceRef||null});}
 function storedPlan(plan=[]){return plan.map(({sourceSliceText,...x})=>x);}
 
 function relevantSourceContext(options,item,index,total,maxChars=32000){
@@ -701,6 +775,12 @@ async function generatePlannedPage(options,project,item,index,total,onProgress){
   const globalRules=generationInstruction({...options,parsedFile:ruleSource,knowledge:[],approvedOutline:null});
   const prior=compactPageContext(project.pages);
   const allowResearch=options.contentMode!=='preserve' && Boolean(options.research||options.contentMode==='research_expand') && /evidence|research|market|context|finding|trend|benchmark|comparison|policy|data|impact/i.test(`${item?.role||''} ${item?.title||''} ${item?.purpose||''}`);
+  const archetype=sourceSliceArchetype({text:item?.sourceSliceText||'',title:item?.title||''},index,total);
+  if(options.contentMode==='preserve'&&item?.sourceSliceText&&['toc','glossary'].includes(archetype)){
+    const page=sourceFaithfulFallbackPage(item,index,total);
+    if(onProgress)await onProgress({stage:'deterministic-layout',index,total,message:`Page ${index+1} uses the deterministic ${archetype} publishing engine to preserve structure and reduce AI usage.`});
+    return {page,sources:[],fidelity:{coverage:1,orderedCoverage:1,sourceRef:item?.sourceRef||null,mode:`deterministic-${archetype}`}};
+  }
   let lastError=null;
   for(let attempt=1;attempt<=3;attempt++){
     const sourceMax=attempt===1?32000:attempt===2?20000:12000;
@@ -709,14 +789,14 @@ async function generatePlannedPage(options,project,item,index,total,onProgress){
     const conservative=attempt>1?`\nRECOVERY PASS ${attempt}: Keep the page response compact. Prefer fewer, complete blocks over long prose. Never truncate a string, table cell, list item or JSON field. Preserve all critical source facts assigned to this page.${exactTarget?' This project has an exact final page target, so this planned page must fit one A4 sheet without creating an extra continuation page.':''}`:'';
     const input=`Generate exactly ONE ${options.type==='presentation'?'slide':options.type==='graphic'?'graphic canvas':'designed document page/section'} as item ${index+1} of ${total}. This request is deliberately page-scoped: never return the full project.\n\nPLANNED PAGE:\nTitle: ${item?.title||`Page ${index+1}`}\nRole: ${item?.role||'narrative'}\nRequired layout: ${item?.layout||'editorial'}\nVisual treatment: ${item?.visualTreatment||'Use the design intelligence rules'}\nPurpose: ${item?.purpose||''}\n\nPROJECT TITLE: ${project.title}\nPROJECT SUMMARY/STRATEGY: ${project.summary}\nRECENT COMPLETED PAGES (avoid repetition and maintain continuity):\n${JSON.stringify(prior)}\n\n${globalRules}\n\n${source?`AUTHORITATIVE SOURCE EXCERPTS FOR THIS PAGE:\n${source}\n`:''}${knowledge?`\nRELEVANT RECYKAL KNOWLEDGE CONTEXT:\n${knowledge}\n`:''}${conservative}\n\nPAGE-SCOPED RULES:\n- Return one page and its sources only.\n- Follow the planned role/layout unless source fidelity makes a small safe adjustment necessary.\n- Do not duplicate prior-page content.\n- PRESERVE MODE STRUCTURE LOCK: when authoritative source text is supplied, keep its reading order. Do not move later source paragraphs, list items or table rows ahead of earlier material. Do not manufacture a page headline from an incidental TOC/glossary entry. Preserve explicit structural labels such as TABLE OF CONTENTS, GLOSSARY, MESSAGE, FOREWORD, CHAPTER and PART.\n- For TABLE OF CONTENTS / CONTENTS pages, use a table block with SECTION / PAGE (or an equally clean contents grid); never promote a random contents entry into the page headline.\n- For glossary pages, keep TERM / DEFINITION pairings intact and in source order.\n- Keep each numbered/bulleted item with its own explanation; never strand an item label on one page and its explanation on another unless the source itself continues it.\n- If this page contains a source table, preserve its cells and units; use a table block.\n- If content is sequential/chronological/comparative, use process/timeline/comparison structure rather than plain paragraphs.\n- For image needs, create image blocks with specific imagePrompt and altText, not fake URLs.\n- Never invent metrics, citations, quotations, people, dates or product claims.\n- Keep body copy readable; use columns or additional planned pages rather than tiny type. For A4 long-form, use a role-led scale: page H1 about 20–28 pt, H2 14–18 pt, H3 11–14 pt, lead 11–13 pt, body 9.5–10.5 pt, captions/tables 7.5–9 pt. Keep body leading roughly 1.35–1.5× and sustained line length around 50–75 characters. A document page must fit an A4 portrait sheet with no vertical growth or overflow; ${exactTarget?'this exact-count page must fit one A4 sheet and must not create an unplanned continuation page.':'continue onto another page when needed.'}\n- Do not put the Recykal logo into page content; the master renderer handles the logo on the cover only.`;
     try{
-      const raw=await structuredResponse({name:'recykal_incremental_page',schema:generatedPageResultSchema,research:allowResearch,input,maxOutputTokens:attempt===1?12000:8000,attempts:1,signal:options.signal,timeoutMs:Number(process.env.OPENAI_PAGE_TIMEOUT_MS||120000),cacheKey:'lfds-v1.2.3-page-layout'});
+      const raw=await structuredResponse({name:'recykal_incremental_page',schema:generatedPageResultSchema,research:allowResearch,input,maxOutputTokens:attempt===1?12000:8000,attempts:1,signal:options.signal,timeoutMs:Number(process.env.OPENAI_PAGE_TIMEOUT_MS||120000),cacheKey:'lfds-v1.3.0-editorial-layout'});
       if(!raw?.page)throw new Error('Studio AI returned no page.');
-      let page=normalizePage({...raw.page,title:raw.page.title||item?.title||`Page ${index+1}`,layout:raw.page.layout||item?.layout||'editorial'});
+      let page=normalizePage({...raw.page,title:raw.page.title||item?.title||`Page ${index+1}`,layout:raw.page.layout||item?.layout||'editorial',sourceRef:item?.sourceRef||null});
       if(options.contentMode==='preserve'&&item?.sourceSliceText){
         const generated=generatedTextForCoverage(page);const coverage=wordCoverage(item.sourceSliceText,generated);const ordered=orderedWordCoverage(item.sourceSliceText,generated);
         if(coverage<0.995){const fidelityError=new Error(`Page ${index+1} preserved only ${Math.round(coverage*1000)/10}% of its assigned source content.`);fidelityError.code='SOURCE_PAGE_FIDELITY';fidelityError.coverage=coverage;throw fidelityError;}
         if(ordered<0.985){const fidelityError=new Error(`Page ${index+1} changed the authoritative source reading order too aggressively (${Math.round(ordered*1000)/10}% ordered alignment).`);fidelityError.code='SOURCE_PAGE_ORDER';fidelityError.coverage=ordered;throw fidelityError;}
-        const hints=sourceStructureHints(item.sourceSliceText);if((hints.toc||hints.glossary)&&page.layout!=='table')page.layout='table';
+        const hints=sourceStructureHints(item.sourceSliceText);if(hints.toc)page.layout='toc';else if(hints.glossary)page.layout='glossary';
         // A dense message/foreword must never collapse into a decorative quote-only page.
         if(page.layout==='quote'&&String(item.sourceSliceText).length>900)page.layout=preferredLayoutForSourceSlice({text:item.sourceSliceText},index,total);
       }
@@ -770,7 +850,7 @@ export async function autoRedesignPagesToQc(project,options,{onProgress=null,max
       const neighbor={previous:project.pages?.[pageIndex-1]?compactPageContext([project.pages[pageIndex-1]])[0]:null,next:project.pages?.[pageIndex+1]?compactPageContext([project.pages[pageIndex+1]])[0]:null};
       if(onProgress)await onProgress({stage:'auto-redesign-page',round,pageIndex,current:ci+1,total:candidates.length,message:`Redesigning page ${pageIndex+1} of ${project.pages.length} after QC…`});
       try{
-        const revised=await structuredResponse({name:'recykal_page_auto_redesign',schema:pageSchema,research:false,maxOutputTokens:9000,attempts:2,signal:options.signal,timeoutMs:Number(process.env.OPENAI_PAGE_TIMEOUT_MS||120000),cacheKey:'lfds-v1.2.3-qc-redesign',input:`You are the automatic post-QC page designer for Recykal Long Form Design Studio. Redesign exactly ONE A4 portrait page. The project has already failed the quality gate, so this is a corrective production pass, not a cosmetic variation.
+        const revised=await structuredResponse({name:'recykal_page_auto_redesign',schema:pageSchema,research:false,maxOutputTokens:9000,attempts:2,signal:options.signal,timeoutMs:Number(process.env.OPENAI_PAGE_TIMEOUT_MS||120000),cacheKey:'lfds-v1.3.0-qc-redesign',input:`You are the automatic post-QC page designer for Recykal Long Form Design Studio. Redesign exactly ONE A4 portrait page. The project has already failed the quality gate, so this is a corrective production pass, not a cosmetic variation.
 
 TARGET QUALITY GATE: ${DESIGN_KNOWLEDGE.deliveryThreshold}/100 or higher with zero blocking defects.
 PAGE: ${pageIndex+1} of ${project.pages.length}
@@ -894,6 +974,10 @@ export async function generateProjectStream(options, onProgress=async()=>{}) {
     planStrategy='Approved design plan';
   }
   let exactTarget=normalizedTargetPageCount(generationOptions.targetPageCount,generationOptions.type);
+  if(!exactTarget&&generationOptions.type==='document'&&generationOptions.contentMode==='preserve'&&generationOptions.parsedFile){
+    const sourcePages=recommendedPreservePageCount(generationOptions.parsedFile);
+    if(sourcePages){exactTarget=sourcePages;generationOptions={...generationOptions,targetPageCount:sourcePages,autoExpandPageTarget:false,implicitSourcePageTarget:true,semanticAutoPagination:true};}
+  }
   if(exactTarget)planItems=reconcileOutlineToTarget(planItems,exactTarget);
   planItems=sourceAwarePlan(planItems,generationOptions,exactTarget||null);
   if(generationOptions.type==='graphic')planItems=planItems.slice(0,1);
@@ -1086,6 +1170,8 @@ export async function qualityControlProject(project,{parsedFile=null}={}) {
   }
   const ai=client();
   if(!ai) return staticQc;
+  const skipExpensiveQc=String(process.env.SKIP_AI_QC_ON_STRUCTURAL_FAIL??'true').toLowerCase()!=='false' && (Number(staticQc.totalScore||0)<82 || (staticQc.blockingDefects||[]).length>3);
+  if(skipExpensiveQc)return {...staticQc,aiQcDeferred:true,aiQcReason:'Deterministic preflight is below the AI-review entry gate; repair structural defects first to avoid wasting model credits.'};
   const sourceText=parsedFile?.text ? parsedFile.text.slice(0,180000) : '';
   let review;
   try {
@@ -1232,7 +1318,7 @@ export async function generateOutline(options){
   const target=normalizedTargetPageCount(options.targetPageCount,options.type);
   if(options.type==='document'&&options.contentMode==='preserve'&&options.parsedFile&&orderedSourceSegments(options.parsedFile).length){
     const slices=allocateSourceSlices(options.parsedFile,target||orderedSourceSegments(options.parsedFile).length);
-    const items=slices.map((slice,i)=>({title:slice.title,role:i===0?'opening':'source-faithful',layout:preferredLayoutForSourceSlice(slice,i,slices.length),visualTreatment:i===0?'Strong government/editorial cover with a relevant visual field':'Source-led editorial composition; preserve all assigned text and use visuals only when they improve comprehension.',purpose:`Design source ${slice.filename}, page ${slice.sourceIndex}${slice.parts>1?`, part ${slice.part} of ${slice.parts}`:''} without dropping source content.`}));
+    const items=slices.map((slice,i)=>({title:slice.title,role:i===0?'opening':'source-faithful',layout:preferredLayoutForSourceSlice(slice,i,slices.length),visualTreatment:({cover:'Publication cover with content-specific visual field',toc:'Navigation-first contents grid',glossary:'Balanced term-definition reference columns',message:'Leadership editorial with signature hierarchy','section-opener':'Intentional part/chapter divider',process:'Native explanatory process diagram','data-story':'Evidence-led data composition','case-study':'Distinct case-study field',summary:'Synthesis-led summary page','two-column':'Dense baseline-aligned editorial columns',editorial:'Editorial narrative grid'}[preferredLayoutForSourceSlice(slice,i,slices.length)]||'Source-led editorial composition'),purpose:`Design source ${slice.filename}, page ${slice.sourceIndex}${slice.parts>1?`, part ${slice.part} of ${slice.parts}`:''} without dropping source content.`}));
     return {title:options.prompt||options.parsedFile.filename||'Design plan',strategy:`Source-faithful design plan${target?` · target ${target} A4 pages`:''}. Content allocation is deterministic so source pages are not accidentally omitted or overloaded.`,items};
   }
   const instruction=generationInstruction({...options,approvedOutline:null});
