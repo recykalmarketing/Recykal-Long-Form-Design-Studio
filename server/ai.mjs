@@ -123,6 +123,8 @@ export function normalizeProject(raw, options={}) {
     continuationBatches: options.continuationBatches || raw.continuationBatches || [],
     sourceFiles: options.sourceFiles || raw.sourceFiles || (options.sourceFile ? [options.sourceFile] : []),
     designDNA: options.designDNA || raw.designDNA || null,
+    generation: options.generation || raw.generation || null,
+    recovery: options.recovery || raw.recovery || null,
     createdAt: options.createdAt || now,
     updatedAt: now
   };
@@ -407,11 +409,13 @@ function friendlyStructuredError(err, name='structured output') {
   return err instanceof Error ? err : new Error(msg||`Could not create ${name}.`);
 }
 
-async function structuredResponse({ input, schema, name, research=false, maxOutputTokens=16000, attempts=3 }) {
+async function structuredResponse({ input, schema, name, research=false, maxOutputTokens=16000, attempts=3, signal=null, timeoutMs=null, cacheKey=null }) {
   const ai = client();
   if (!ai) return null;
   let lastError=null;
+  const requestTimeout=Math.max(30000,Math.min(240000,Number(timeoutMs||process.env.OPENAI_PAGE_TIMEOUT_MS||120000)));
   for(let attempt=1;attempt<=Math.max(1,attempts);attempt++){
+    if(signal?.aborted)throw Object.assign(new Error('Generation paused by user.'),{name:'AbortError'});
     try{
       const request = {
         model: MODEL,
@@ -420,15 +424,17 @@ async function structuredResponse({ input, schema, name, research=false, maxOutp
         instructions: brandSystemPrompt,
         input,
         max_output_tokens: Math.max(2500,Math.min(32000,Number(maxOutputTokens)||16000)),
-        text: { format: { type:'json_schema', name, schema, strict:true } }
+        text: { format: { type:'json_schema', name, schema, strict:true } },
+        prompt_cache_key: cacheKey||process.env.OPENAI_PROMPT_CACHE_KEY||'lfds-v1.2.3-layout-engine'
       };
       if (research) request.tools = [{ type:'web_search' }];
-      const response = await ai.responses.create(request);
+      const response = await ai.responses.create(request,{signal,timeout:requestTimeout});
       if(response?.status==='incomplete') throw new Error(`Structured response incomplete: ${response?.incomplete_details?.reason||'output limit'}`);
       const text = response.output_text;
       if (!text) throw new Error('OpenAI returned no structured output.');
       try{return JSON.parse(text)}catch(parseError){throw friendlyStructuredError(parseError,name)}
     }catch(err){
+      if(signal?.aborted||err?.name==='AbortError')throw Object.assign(new Error('Generation paused by user.'),{name:'AbortError'});
       lastError=friendlyStructuredError(err,name);
       if(attempt<attempts) await new Promise(r=>setTimeout(r,350*attempt));
     }
@@ -641,7 +647,23 @@ function sourceStructureHints(text=''){
     message:/\b(message|foreword|chief minister|chief secretary|chairperson)\b/.test(low)
   };
 }
-function sourceFallbackBlocks(text='',title='Source'){const lines=String(text||'').split(/\n+/).map(x=>x.trim()).filter(Boolean);const blocks=[];let headingUsed=false,body=[];for(const line of lines){const allCaps=line.length<110&&/[A-Z]/.test(line)&&line===line.toUpperCase();if(!headingUsed&&allCaps){if(!blocks.length)blocks.push(normalizeBlock({type:'kicker',text:line}));else blocks.push(normalizeBlock({type:'heading',text:line}));headingUsed=true;continue}body.push(line)}if(!blocks.some(b=>b.type==='heading'))blocks.push(normalizeBlock({type:'heading',text:title}));const joined=body.join(' ');for(const part of splitWordsToLimit(joined,900))blocks.push(normalizeBlock({type:'paragraph',text:part}));return blocks;}
+function sourceFallbackBlocks(text='',title='Source'){
+  const lines=String(text||'').split(/\n+/).map(x=>x.trim()).filter(Boolean);const blocks=[];let headingUsed=false,body=[];
+  for(const line of lines){const allCaps=line.length<110&&/[A-Z]/.test(line)&&line===line.toUpperCase();if(!headingUsed&&allCaps&&!line.includes('\t')){if(!blocks.length)blocks.push(normalizeBlock({type:'kicker',text:line}));else blocks.push(normalizeBlock({type:'heading',text:line}));headingUsed=true;continue}body.push(line)}
+  if(!blocks.some(b=>b.type==='heading'))blocks.push(normalizeBlock({type:'heading',text:title}));
+  const tabRows=body.filter(x=>x.includes('\t')).map(x=>x.split(/\t+/).map(c=>c.trim()).filter(Boolean));const low=String(text).toLowerCase();
+  if(tabRows.length>=3){
+    const maxCols=Math.max(...tabRows.map(r=>r.length));const rows=tabRows.filter(r=>r.length>=2).map(r=>{const out=[...r];while(out.length<maxCols)out.push('');return out.slice(0,maxCols)});
+    let headers=[];if(rows.length&&rows[0].some(c=>/^(term|meaning|definition|section|page)$/i.test(c)))headers=rows.shift();
+    if(!headers.length)headers=/glossary|term\s+(?:meaning|definition)/i.test(low)?['TERM','DEFINITION']:/(table of contents|\bcontents\b)/i.test(low)?['SECTION','PAGE']:Array.from({length:maxCols},(_,i)=>`COLUMN ${i+1}`);
+    blocks.push(normalizeBlock({type:'table',tableHeaders:headers,tableRows:rows,caption:''}));const leftovers=body.filter(x=>!x.includes('\t'));if(leftovers.length)for(const part of splitWordsToLimit(leftovers.join(' '),900))blocks.push(normalizeBlock({type:'paragraph',text:part}));return blocks;
+  }
+  if(/table of contents|(?:^|\n)contents\b/i.test(text)){
+    const rows=[],leftovers=[];for(const line of body){const m=line.match(/^(.*?)(?:\.{2,}|\s{2,})(\d+)\s*$/);if(m)rows.push([m[1].trim(),m[2]]);else leftovers.push(line)}
+    if(rows.length>=3){blocks.push(normalizeBlock({type:'table',tableHeaders:['SECTION','PAGE'],tableRows:rows}));if(leftovers.length)for(const part of splitWordsToLimit(leftovers.join(' '),900))blocks.push(normalizeBlock({type:'paragraph',text:part}));return blocks;}
+  }
+  const joined=body.join(' ');for(const part of splitWordsToLimit(joined,900))blocks.push(normalizeBlock({type:'paragraph',text:part}));return blocks;
+}
 function sourceFaithfulFallbackPage(item={},index=0,total=1){const text=String(item.sourceSliceText||'').trim(),layout=preferredLayoutForSourceSlice({text},index,total);return normalizePage({title:item.title||`Page ${index+1}`,layout,blocks:sourceFallbackBlocks(text,item.title||`Page ${index+1}`),speakerNotes:''});}
 function storedPlan(plan=[]){return plan.map(({sourceSliceText,...x})=>x);}
 
@@ -664,6 +686,15 @@ function mergeSources(existing=[],incoming=[]){
   const out=[...(existing||[])];const keys=new Set(out.map(s=>String(s.url||s.title||'').trim().toLowerCase()).filter(Boolean));for(const src of incoming||[]){const key=String(src?.url||src?.title||'').trim().toLowerCase();if(!key||keys.has(key))continue;keys.add(key);out.push(src)}return out.slice(0,120);
 }
 
+function appendSourceLedger(generation={},index=0,item={},fidelity={}){
+  const ledger=Array.isArray(generation.sourceLedger)?[...generation.sourceLedger]:[];
+  ledger[index]={pageIndex:index,sourceRef:item?.sourceRef||fidelity?.sourceRef||null,coverage:Number(fidelity?.coverage??1),orderedCoverage:Number(fidelity?.orderedCoverage??1),mode:fidelity?.mode||'unknown',passed:Number(fidelity?.coverage??1)>=0.995&&Number(fidelity?.orderedCoverage??1)>=0.985,checkedAt:new Date().toISOString()};
+  return ledger;
+}
+function cleanCoverageSource(text=''){
+  return String(text||'').replace(/^=====.*?=====\s*$/gm,' ').replace(/^---\s*(?:PAGE|SLIDE)\s+\d+.*?---\s*$/gmi,' ').replace(/\s+/g,' ').trim();
+}
+
 async function generatePlannedPage(options,project,item,index,total,onProgress){
   const exactTarget=normalizedTargetPageCount(options.targetPageCount,options.type);
   const ruleSource=options.parsedFile?{...options.parsedFile,text:'',assets:[]}:null;
@@ -678,19 +709,19 @@ async function generatePlannedPage(options,project,item,index,total,onProgress){
     const conservative=attempt>1?`\nRECOVERY PASS ${attempt}: Keep the page response compact. Prefer fewer, complete blocks over long prose. Never truncate a string, table cell, list item or JSON field. Preserve all critical source facts assigned to this page.${exactTarget?' This project has an exact final page target, so this planned page must fit one A4 sheet without creating an extra continuation page.':''}`:'';
     const input=`Generate exactly ONE ${options.type==='presentation'?'slide':options.type==='graphic'?'graphic canvas':'designed document page/section'} as item ${index+1} of ${total}. This request is deliberately page-scoped: never return the full project.\n\nPLANNED PAGE:\nTitle: ${item?.title||`Page ${index+1}`}\nRole: ${item?.role||'narrative'}\nRequired layout: ${item?.layout||'editorial'}\nVisual treatment: ${item?.visualTreatment||'Use the design intelligence rules'}\nPurpose: ${item?.purpose||''}\n\nPROJECT TITLE: ${project.title}\nPROJECT SUMMARY/STRATEGY: ${project.summary}\nRECENT COMPLETED PAGES (avoid repetition and maintain continuity):\n${JSON.stringify(prior)}\n\n${globalRules}\n\n${source?`AUTHORITATIVE SOURCE EXCERPTS FOR THIS PAGE:\n${source}\n`:''}${knowledge?`\nRELEVANT RECYKAL KNOWLEDGE CONTEXT:\n${knowledge}\n`:''}${conservative}\n\nPAGE-SCOPED RULES:\n- Return one page and its sources only.\n- Follow the planned role/layout unless source fidelity makes a small safe adjustment necessary.\n- Do not duplicate prior-page content.\n- PRESERVE MODE STRUCTURE LOCK: when authoritative source text is supplied, keep its reading order. Do not move later source paragraphs, list items or table rows ahead of earlier material. Do not manufacture a page headline from an incidental TOC/glossary entry. Preserve explicit structural labels such as TABLE OF CONTENTS, GLOSSARY, MESSAGE, FOREWORD, CHAPTER and PART.\n- For TABLE OF CONTENTS / CONTENTS pages, use a table block with SECTION / PAGE (or an equally clean contents grid); never promote a random contents entry into the page headline.\n- For glossary pages, keep TERM / DEFINITION pairings intact and in source order.\n- Keep each numbered/bulleted item with its own explanation; never strand an item label on one page and its explanation on another unless the source itself continues it.\n- If this page contains a source table, preserve its cells and units; use a table block.\n- If content is sequential/chronological/comparative, use process/timeline/comparison structure rather than plain paragraphs.\n- For image needs, create image blocks with specific imagePrompt and altText, not fake URLs.\n- Never invent metrics, citations, quotations, people, dates or product claims.\n- Keep body copy readable; use columns or additional planned pages rather than tiny type. For A4 long-form, use a role-led scale: page H1 about 20–28 pt, H2 14–18 pt, H3 11–14 pt, lead 11–13 pt, body 9.5–10.5 pt, captions/tables 7.5–9 pt. Keep body leading roughly 1.35–1.5× and sustained line length around 50–75 characters. A document page must fit an A4 portrait sheet with no vertical growth or overflow; ${exactTarget?'this exact-count page must fit one A4 sheet and must not create an unplanned continuation page.':'continue onto another page when needed.'}\n- Do not put the Recykal logo into page content; the master renderer handles the logo on the cover only.`;
     try{
-      const raw=await structuredResponse({name:'recykal_incremental_page',schema:generatedPageResultSchema,research:allowResearch,input,maxOutputTokens:attempt===1?12000:8000,attempts:1});
+      const raw=await structuredResponse({name:'recykal_incremental_page',schema:generatedPageResultSchema,research:allowResearch,input,maxOutputTokens:attempt===1?12000:8000,attempts:1,signal:options.signal,timeoutMs:Number(process.env.OPENAI_PAGE_TIMEOUT_MS||120000),cacheKey:'lfds-v1.2.3-page-layout'});
       if(!raw?.page)throw new Error('Studio AI returned no page.');
       let page=normalizePage({...raw.page,title:raw.page.title||item?.title||`Page ${index+1}`,layout:raw.page.layout||item?.layout||'editorial'});
       if(options.contentMode==='preserve'&&item?.sourceSliceText){
         const generated=generatedTextForCoverage(page);const coverage=wordCoverage(item.sourceSliceText,generated);const ordered=orderedWordCoverage(item.sourceSliceText,generated);
-        if(coverage<0.80){const fidelityError=new Error(`Page ${index+1} preserved only ${Math.round(coverage*100)}% of its assigned source content.`);fidelityError.code='SOURCE_PAGE_FIDELITY';fidelityError.coverage=coverage;throw fidelityError;}
-        if(ordered<0.68){const fidelityError=new Error(`Page ${index+1} changed the authoritative source reading order too aggressively (${Math.round(ordered*100)}% ordered alignment).`);fidelityError.code='SOURCE_PAGE_ORDER';fidelityError.coverage=ordered;throw fidelityError;}
+        if(coverage<0.995){const fidelityError=new Error(`Page ${index+1} preserved only ${Math.round(coverage*1000)/10}% of its assigned source content.`);fidelityError.code='SOURCE_PAGE_FIDELITY';fidelityError.coverage=coverage;throw fidelityError;}
+        if(ordered<0.985){const fidelityError=new Error(`Page ${index+1} changed the authoritative source reading order too aggressively (${Math.round(ordered*1000)/10}% ordered alignment).`);fidelityError.code='SOURCE_PAGE_ORDER';fidelityError.coverage=ordered;throw fidelityError;}
         const hints=sourceStructureHints(item.sourceSliceText);if((hints.toc||hints.glossary)&&page.layout!=='table')page.layout='table';
         // A dense message/foreword must never collapse into a decorative quote-only page.
         if(page.layout==='quote'&&String(item.sourceSliceText).length>900)page.layout=preferredLayoutForSourceSlice({text:item.sourceSliceText},index,total);
       }
       if(options.type==='document'&&pageExceedsA4Budget(page))page={...page,a4:{format:'A4',orientation:'portrait',fixed:true,needsReflow:true}};
-      return {page,sources:raw.sources||[]};
+      return {page,sources:raw.sources||[],fidelity:{coverage:options.contentMode==='preserve'&&item?.sourceSliceText?wordCoverage(item.sourceSliceText,generatedTextForCoverage(page)):1,orderedCoverage:options.contentMode==='preserve'&&item?.sourceSliceText?orderedWordCoverage(item.sourceSliceText,generatedTextForCoverage(page)):1,sourceRef:item?.sourceRef||null,mode:'ai'}};
     }catch(err){
       lastError=err; if(attempt<3)await onProgress({stage:'retry',index,total,attempt:attempt+1,message:`Page ${index+1} needed a safe retry. Completed pages are preserved.`});
     }
@@ -698,7 +729,7 @@ async function generatePlannedPage(options,project,item,index,total,onProgress){
   if(options.contentMode==='preserve'&&item?.sourceSliceText){
     const page=sourceFaithfulFallbackPage(item,index,total);
     if(onProgress)await onProgress({stage:'fidelity-fallback',index,total,message:`Page ${index+1} was rebuilt directly from the authoritative source because AI layout attempts dropped source content.`});
-    return {page,sources:[]};
+    return {page,sources:[],fidelity:{coverage:1,orderedCoverage:1,sourceRef:item?.sourceRef||null,mode:'deterministic-fallback'}};
   }
   const message=`Page ${index+1} could not be completed after 3 safe retries. Completed pages have been preserved so you can resume instead of starting over.`;
   const error=new Error(message);error.cause=lastError;error.code=lastError?.code||'PAGE_GENERATION_FAILED';error.projectId=project.id;throw error;
@@ -739,7 +770,7 @@ export async function autoRedesignPagesToQc(project,options,{onProgress=null,max
       const neighbor={previous:project.pages?.[pageIndex-1]?compactPageContext([project.pages[pageIndex-1]])[0]:null,next:project.pages?.[pageIndex+1]?compactPageContext([project.pages[pageIndex+1]])[0]:null};
       if(onProgress)await onProgress({stage:'auto-redesign-page',round,pageIndex,current:ci+1,total:candidates.length,message:`Redesigning page ${pageIndex+1} of ${project.pages.length} after QC…`});
       try{
-        const revised=await structuredResponse({name:'recykal_page_auto_redesign',schema:pageSchema,research:false,maxOutputTokens:9000,attempts:2,input:`You are the automatic post-QC page designer for Recykal Long Form Design Studio. Redesign exactly ONE A4 portrait page. The project has already failed the quality gate, so this is a corrective production pass, not a cosmetic variation.
+        const revised=await structuredResponse({name:'recykal_page_auto_redesign',schema:pageSchema,research:false,maxOutputTokens:9000,attempts:2,signal:options.signal,timeoutMs:Number(process.env.OPENAI_PAGE_TIMEOUT_MS||120000),cacheKey:'lfds-v1.2.3-qc-redesign',input:`You are the automatic post-QC page designer for Recykal Long Form Design Studio. Redesign exactly ONE A4 portrait page. The project has already failed the quality gate, so this is a corrective production pass, not a cosmetic variation.
 
 TARGET QUALITY GATE: ${DESIGN_KNOWLEDGE.deliveryThreshold}/100 or higher with zero blocking defects.
 PAGE: ${pageIndex+1} of ${project.pages.length}
@@ -772,7 +803,7 @@ NON-NEGOTIABLE PRODUCTION RULES:
         let repaired=inheritPageFormatting(original,normalizePage({...revised,id:original.id,title:revised.title||original.title}));
         if(options.contentMode==='preserve'&&sourceSlice){
           const out=generatedTextForCoverage(repaired),coverage=wordCoverage(sourceSlice,out),ordered=orderedWordCoverage(sourceSlice,out);
-          if(coverage<0.80||ordered<0.68){
+          if(coverage<0.995||ordered<0.985){
             // Never accept a visually prettier page that damages the authoritative source.
             repaired=sourceFaithfulFallbackPage({title:sourceSlices[pageIndex]?.title||original.title,sourceSliceText:sourceSlice},pageIndex,project.pages.length);repaired.id=original.id;
           }
@@ -781,6 +812,7 @@ NON-NEGOTIABLE PRODUCTION RULES:
           const before=generatedTextForCoverage(original),after=generatedTextForCoverage(repaired);if(before&&wordCoverage(before,after)<0.86)continue;
         }
         project.pages[pageIndex]=repaired;
+        if(options.contentMode==='preserve'&&sourceSlice){const out=generatedTextForCoverage(repaired);project.generation={...(project.generation||{}),sourceLedger:appendSourceLedger(project.generation,pageIndex,sourceSlices[pageIndex]||{}, {coverage:wordCoverage(sourceSlice,out),orderedCoverage:orderedWordCoverage(sourceSlice,out),sourceRef:sourceSlices[pageIndex]?.sourceRef||null,mode:'qc-redesign'})};}
       }catch{}
     }
     project=applyLayoutIntelligence(project);
@@ -869,8 +901,8 @@ export async function generateProjectStream(options, onProgress=async()=>{}) {
 
   const base=projectOptionsFromGeneration(generationOptions);
   let project=normalizeProject({title:planTitle||generationOptions.prompt||generationOptions.parsedFile?.filename||'Untitled project',summary:planStrategy,pages:[],sources:[]},base);
-  project.generation={status:'running',completed:0,total:planItems.length,startedAt:new Date().toISOString(),lastError:'',plan:storedPlan(planItems),initialTargetPageCount:exactTarget||null,autoExpanded:false};
-  await onProgress({stage:'accepted',projectId:project.id,total:planItems.length,message:'Page-safe generation started.'});
+  project.generation={status:'running',phase:'pages',completed:0,total:planItems.length,startedAt:new Date().toISOString(),lastError:'',plan:storedPlan(planItems),sourceLedger:[],initialTargetPageCount:exactTarget||null,autoExpanded:false};
+  await onProgress({stage:'accepted',projectId:project.id,total:planItems.length,plan:storedPlan(planItems),message:'Page-safe generation started.'});
   if(typeof generationOptions.checkpoint==='function')await generationOptions.checkpoint(project,{stage:'accepted'});
 
   let expansionCount=0;
@@ -909,21 +941,24 @@ export async function generateProjectStream(options, onProgress=async()=>{}) {
         }
       }
       project.pages.push(result.page);project.sources=mergeSources(project.sources,result.sources);project=applyLayoutIntelligence(project);
-      project.generation={...project.generation,status:'running',completed:i+1,total:planItems.length,lastError:'',plan:storedPlan(planItems)};
+      project.generation={...project.generation,status:'running',phase:'pages',completed:i+1,total:planItems.length,lastError:'',plan:storedPlan(planItems),sourceLedger:appendSourceLedger(project.generation,i,planItems[i],result.fidelity)};
       if(typeof generationOptions.checkpoint==='function')await generationOptions.checkpoint(project,{stage:'page',index:i});
       await onProgress({stage:'page',index:i,total:planItems.length,page:project.pages[i],projectId:project.id,targetPageCount:exactTarget,autoExpanded:Boolean(project.generation?.autoExpanded)});
     }
 
+    project.generation={...project.generation,status:'running',phase:'finalizing',completed:project.pages.length,total:planItems.length,lastError:''};
+    if(typeof generationOptions.checkpoint==='function')await generationOptions.checkpoint(project,{stage:'finalizing'});
+    await onProgress({stage:'finalizing',completed:project.pages.length,total:planItems.length,message:'All planned pages are saved. Running layout, visuals and final QC…'});
     const finalized=await finalizeGeneratedProject(project,{...generationOptions,incremental:true},{onProgress});
     const effectiveTarget=Number(finalized.settings?.targetPageCount)||exactTarget||null;
     if(effectiveTarget&&finalized.pages.length!==effectiveTarget)throw new Error(`Page target integrity check failed after A4 reflow: target is ${effectiveTarget} pages but the project contains ${finalized.pages.length}. Completed pages are preserved.`);
     exactTarget=effectiveTarget;
     finalized.settings={...(finalized.settings||{}),targetPageCount:effectiveTarget,autoExpandPageTarget:Boolean(generationOptions.autoExpandPageTarget)};
-    finalized.generation={...project.generation,status:'complete',completed:finalized.pages.length,total:planItems.length,finishedAt:new Date().toISOString(),lastError:'',finalTargetPageCount:exactTarget||null};
+    finalized.generation={...project.generation,status:'complete',phase:'complete',completed:finalized.pages.length,total:planItems.length,finishedAt:new Date().toISOString(),lastError:'',finalTargetPageCount:exactTarget||null};
     if(typeof generationOptions.checkpoint==='function')await generationOptions.checkpoint(finalized,{stage:'complete'});
     await onProgress({stage:'complete',project:finalized});return finalized;
   }catch(err){
-    project.generation={...project.generation,status:'failed',completed:project.pages.length,total:planItems.length,lastError:err.message||'Generation failed',failedAt:new Date().toISOString(),finalTargetPageCount:exactTarget||null};
+    project.generation={...project.generation,status:(err?.name==='AbortError'||generationOptions.signal?.aborted)?'paused':'failed',phase:project.generation?.phase||'pages',completed:project.pages.length,total:planItems.length,lastError:err.message||'Generation failed',failedAt:new Date().toISOString(),finalTargetPageCount:exactTarget||null};
     if(typeof generationOptions.checkpoint==='function')await generationOptions.checkpoint(project,{stage:'failed',error:err.message});
     err.projectId=err.projectId||project.id;err.completedPages=project.pages.length;err.totalPages=planItems.length;throw err;
   }
@@ -936,16 +971,18 @@ export async function generateProject(options) {
 }
 
 export async function resumeProjectStream(existingProject, options={}, onProgress=async()=>{}) {
-  if(existingProject?.type!=='document')throw new Error('Only document projects can resume an interrupted exact-page generation.');
+  if(existingProject?.type!=='document')throw new Error('Only document projects can resume an interrupted document generation.');
   const completed=(existingProject.pages||[]).length;
-  const exactTarget=normalizedTargetPageCount(options.targetPageCount,'document');
-  if(!exactTarget)throw new Error('Choose a new exact final page target before resuming.');
-  if(exactTarget<=completed)throw new Error(`The new final page target must be greater than the ${completed} pages already completed.`);
+  const storedTotal=Math.max(completed,Number(existingProject.generation?.total||0),Number(existingProject.settings?.targetPageCount||0));
+  const requested=normalizedTargetPageCount(options.targetPageCount,'document');
+  const exactTarget=requested||storedTotal||completed;
+  if(!exactTarget)throw new Error('The saved project does not contain a recoverable page target.');
+  if(exactTarget<completed)throw new Error(`The final page target cannot be lower than the ${completed} pages already completed.`);
 
   const s=existingProject.settings||{};
   const generationOptions={
     type:'document',
-    prompt:options.prompt||`Resume the interrupted generation for "${existingProject.title}". Rebalance the remaining source across the new exact ${exactTarget}-page A4 target while preserving the already completed pages.`,
+    prompt:options.prompt||`Resume the interrupted generation for "${existingProject.title}" from the last durable checkpoint. Preserve every completed page and continue only the unfinished source allocation.`,
     parsedFile:options.parsedFile||null,
     contentMode:options.contentMode||existingProject.contentMode||'preserve',
     audience:s.audience||'Recykal marketing stakeholders',
@@ -961,6 +998,7 @@ export async function resumeProjectStream(existingProject, options={}, onProgres
     imageVariations:s.imageVariations||1,
     styleReferences:s.styleReferences||[],
     targetPageCount:exactTarget,
+    autoExpandPageTarget:false,
     research:existingProject.contentMode==='preserve'?false:Boolean(s.research),
     template:options.template||null,
     knowledge:options.knowledge||[],
@@ -968,54 +1006,64 @@ export async function resumeProjectStream(existingProject, options={}, onProgres
     checkpoint:options.checkpoint
   };
 
-  await onProgress({stage:'starting',message:`Replanning the unfinished publication for ${exactTarget} A4 pages…`,completed,total:exactTarget});
-  const outline=await generateOutline(generationOptions);
-  let planItems=reconcileOutlineToTarget(outline?.items||[],exactTarget);
-  if(!planItems.length)throw new Error('Studio AI could not create a revised page plan for the new target.');
+  let project=structuredClone(existingProject);
+  project.settings={...(project.settings||{}),targetPageCount:exactTarget,autoExpandPageTarget:false,pageFormat:'A4',pageOrientation:'portrait',fixedPageSize:true};
+  const finalizingOnly=completed>=exactTarget && ['finalizing','qc','visuals','layout'].includes(String(project.generation?.phase||''));
 
-  // Already-completed pages are immutable. Their plan slots are anchored to the real pages,
-  // while the unfinished remainder is rebalanced against the larger page target.
-  const oldPlan=Array.isArray(existingProject.generation?.plan)?existingProject.generation.plan:[];
-  for(let i=0;i<completed;i++){
-    const page=existingProject.pages[i]||{};
-    planItems[i]={
-      ...(planItems[i]||{}),
-      ...(oldPlan[i]||{}),
-      title:page.title||oldPlan[i]?.title||planItems[i]?.title||`Page ${i+1}`,
-      layout:page.layout||oldPlan[i]?.layout||planItems[i]?.layout||'editorial',
-      role:oldPlan[i]?.role||planItems[i]?.role||'completed',
-      purpose:oldPlan[i]?.purpose||planItems[i]?.purpose||'Already completed and preserved.',
-      visualTreatment:oldPlan[i]?.visualTreatment||planItems[i]?.visualTreatment||'Preserve completed page exactly.'
-    };
+  let planItems=[];
+  if(!finalizingOnly){
+    await onProgress({stage:'starting',message:`Restoring the saved design plan. ${completed} of ${exactTarget} pages are already durable.`,completed,total:exactTarget});
+    const oldPlan=Array.isArray(project.generation?.plan)?project.generation.plan:[];
+    if(oldPlan.length===exactTarget)planItems=reconcileOutlineToTarget(oldPlan,exactTarget);
+    else{
+      const outline=await generateOutline(generationOptions);
+      planItems=reconcileOutlineToTarget(outline?.items||[],exactTarget);
+    }
+    if(generationOptions.contentMode==='preserve'&&generationOptions.parsedFile)planItems=sourceAwarePlan(planItems,generationOptions,exactTarget);
+    if(!planItems.length)throw new Error('Studio AI could not restore a usable page plan for the unfinished project.');
+
+    // Completed pages are immutable. Reattach their real layout/title while retaining the
+    // deterministic source slice assignment so remaining pages continue at the correct source position.
+    for(let i=0;i<completed;i++){
+      const page=project.pages[i]||{};const old=oldPlan[i]||{};const planned=planItems[i]||{};
+      planItems[i]={...planned,...old,title:page.title||old.title||planned.title||`Page ${i+1}`,layout:page.layout||old.layout||planned.layout||'editorial',role:old.role||planned.role||'completed',purpose:old.purpose||planned.purpose||'Already completed and preserved.',visualTreatment:old.visualTreatment||planned.visualTreatment||'Preserve completed page exactly.',sourceSliceText:planned.sourceSliceText,sourceRef:planned.sourceRef||old.sourceRef||null};
+    }
+  } else {
+    planItems=Array.isArray(project.generation?.plan)?project.generation.plan:[];
   }
 
-  let project=structuredClone(existingProject);
-  project.settings={...(project.settings||{}),targetPageCount:exactTarget,pageFormat:'A4',pageOrientation:'portrait',fixedPageSize:true};
-  project.generation={...(project.generation||{}),status:'running',completed,total:exactTarget,plan:planItems,resumedAt:new Date().toISOString(),lastError:'',resumeTarget:exactTarget};
+  project.generation={...(project.generation||{}),status:'running',phase:finalizingOnly?'finalizing':'pages',completed,total:exactTarget,plan:storedPlan(planItems),resumedAt:new Date().toISOString(),lastError:'',resumeTarget:exactTarget};
   project.qc={...(project.qc||{}),stale:true};
-  await onProgress({stage:'accepted',projectId:project.id,total:exactTarget,completed,message:`Target increased to ${exactTarget} pages. Resuming from page ${completed+1}.`});
-  if(typeof options.checkpoint==='function')await options.checkpoint(project,{stage:'resume-accepted',completed,target:exactTarget});
+  await onProgress({stage:'accepted',projectId:project.id,total:exactTarget,completed,message:finalizingOnly?'All pages were already saved. Resuming final layout, visual and QC stages only.':`Checkpoint restored. Continuing from page ${completed+1} without regenerating pages 1–${completed}.`});
+  if(typeof options.checkpoint==='function')await options.checkpoint(project,{stage:'resume-accepted',completed,target:exactTarget,finalizingOnly});
 
   try{
-    for(let i=completed;i<planItems.length;i++){
-      await onProgress({stage:'page-start',index:i,total:planItems.length,message:`Building page ${i+1} of ${planItems.length}…`});
-      const result=await generatePlannedPage(generationOptions,project,planItems[i],i,planItems.length,onProgress);
-      project.pages.push(result.page);project.sources=mergeSources(project.sources,result.sources);project=applyLayoutIntelligence(project);
-      project.generation={...project.generation,status:'running',completed:i+1,total:planItems.length,lastError:''};
-      if(typeof options.checkpoint==='function')await options.checkpoint(project,{stage:'page',index:i,resumed:true});
-      await onProgress({stage:'page',index:i,total:planItems.length,page:project.pages[i],projectId:project.id,resumed:true});
+    if(!finalizingOnly){
+      for(let i=completed;i<planItems.length;i++){
+        if(options.signal?.aborted)throw Object.assign(new Error('Generation paused by user.'),{name:'AbortError'});
+        await onProgress({stage:'page-start',index:i,total:planItems.length,message:`Building page ${i+1} of ${planItems.length}…`});
+        const result=await generatePlannedPage(generationOptions,project,planItems[i],i,planItems.length,onProgress);
+        project.pages.push(result.page);project.sources=mergeSources(project.sources,result.sources);project=applyLayoutIntelligence(project);
+        project.generation={...project.generation,status:'running',phase:'pages',completed:i+1,total:planItems.length,lastError:'',sourceLedger:appendSourceLedger(project.generation,i,planItems[i],result.fidelity)};
+        if(typeof options.checkpoint==='function')await options.checkpoint(project,{stage:'page',index:i,resumed:true});
+        await onProgress({stage:'page',index:i,total:planItems.length,page:project.pages[i],projectId:project.id,resumed:true});
+      }
     }
 
+    project.generation={...project.generation,status:'running',phase:'finalizing',completed:project.pages.length,total:exactTarget,lastError:''};
+    if(typeof options.checkpoint==='function')await options.checkpoint(project,{stage:'resume-finalizing',target:exactTarget});
+    await onProgress({stage:'finalizing',completed:project.pages.length,total:exactTarget,message:'All source pages are durable. Running final A4 composition, visuals and QC…'});
     const finalized=await finalizeGeneratedProject(project,{...generationOptions,incremental:true},{onProgress});
     if(finalized.pages.length!==exactTarget)throw new Error(`Exact page target integrity check failed after resume: requested ${exactTarget} A4 pages but the project contains ${finalized.pages.length}.`);
-    finalized.settings={...(finalized.settings||{}),targetPageCount:exactTarget};
-    finalized.generation={...project.generation,status:'complete',completed:finalized.pages.length,total:exactTarget,finishedAt:new Date().toISOString(),lastError:'',resumeTarget:exactTarget};
+    finalized.settings={...(finalized.settings||{}),targetPageCount:exactTarget,autoExpandPageTarget:false};
+    finalized.generation={...project.generation,status:'complete',phase:'complete',completed:finalized.pages.length,total:exactTarget,finishedAt:new Date().toISOString(),lastError:'',resumeTarget:exactTarget};
     if(typeof options.checkpoint==='function')await options.checkpoint(finalized,{stage:'resume-complete',target:exactTarget});
     await onProgress({stage:'complete',project:finalized,resumed:true});
     return finalized;
   }catch(err){
-    project.generation={...project.generation,status:'failed',completed:project.pages.length,total:exactTarget,lastError:err.message||'Generation resume failed',failedAt:new Date().toISOString(),resumeTarget:exactTarget};
-    if(typeof options.checkpoint==='function')await options.checkpoint(project,{stage:'resume-failed',error:err.message,target:exactTarget});
+    const paused=err?.name==='AbortError'||options.signal?.aborted;
+    project.generation={...project.generation,status:paused?'paused':'failed',phase:project.generation?.phase||'pages',completed:project.pages.length,total:exactTarget,lastError:err.message||'Generation resume failed',failedAt:new Date().toISOString(),resumeTarget:exactTarget};
+    if(typeof options.checkpoint==='function')await options.checkpoint(project,{stage:paused?'resume-paused':'resume-failed',error:err.message,target:exactTarget});
     err.projectId=project.id;err.completedPages=project.pages.length;err.totalPages=exactTarget;throw err;
   }
 }
@@ -1032,8 +1080,9 @@ function compactProjectForQc(project){
 export async function qualityControlProject(project,{parsedFile=null}={}) {
   const staticQc=staticQualityCheck(project);
   if(project.contentMode==='preserve'&&parsedFile?.text){
-    const output=(project.pages||[]).map(generatedTextForCoverage).join(' ');const coverage=wordCoverage(parsedFile.text,output);staticQc.sourceCoverage=Math.round(coverage*100);
-    if(coverage<0.82){const msg=`Preserve-mode source coverage is only ${Math.round(coverage*100)}%. The designed document has dropped too much authoritative source content.`;staticQc.blockingDefects=[...new Set([...(staticQc.blockingDefects||[]),msg])];staticQc.issues=[...(staticQc.issues||[]),{category:'contentFidelity',severity:'blocking',message:msg,pageIndex:null}];staticQc.contentFidelity=Math.min(Number(staticQc.contentFidelity||20),8);staticQc.categories={...(staticQc.categories||{}),contentFidelity:staticQc.contentFidelity};staticQc.totalScore=Math.min(Number(staticQc.totalScore||100),72);staticQc.pass=false;}
+    const output=(project.pages||[]).map(generatedTextForCoverage).join(' ');const authoritative=cleanCoverageSource(parsedFile.text);const coverage=wordCoverage(authoritative,output);const ordered=orderedWordCoverage(authoritative,output);staticQc.sourceCoverage=Math.round(coverage*1000)/10;staticQc.sourceOrderedAlignment=Math.round(ordered*1000)/10;
+    if(coverage<0.995||ordered<0.985){const msg=`Preserve-mode integrity gate failed: ${Math.round(coverage*1000)/10}% source coverage and ${Math.round(ordered*1000)/10}% ordered alignment. Final export requires at least 99.5% coverage and 98.5% reading-order alignment.`;staticQc.blockingDefects=[...new Set([...(staticQc.blockingDefects||[]),msg])];staticQc.issues=[...(staticQc.issues||[]),{category:'contentFidelity',severity:'blocking',message:msg,pageIndex:null}];staticQc.contentFidelity=Math.min(Number(staticQc.contentFidelity||20),4);staticQc.categories={...(staticQc.categories||{}),contentFidelity:staticQc.contentFidelity};staticQc.totalScore=Math.min(Number(staticQc.totalScore||100),68);staticQc.pass=false;}
+    const ledger=project.generation?.sourceLedger||[];const failed=ledger.filter(x=>x&&x.passed===false);if(failed.length){const msg=`${failed.length} page${failed.length===1?'':'s'} failed the per-page source integrity ledger.`;staticQc.blockingDefects=[...new Set([...(staticQc.blockingDefects||[]),msg])];staticQc.issues=[...(staticQc.issues||[]),{category:'contentFidelity',severity:'blocking',message:msg,pageIndex:failed[0]?.pageIndex??null}];staticQc.pass=false;}
   }
   const ai=client();
   if(!ai) return staticQc;
@@ -1235,6 +1284,7 @@ export async function generateImage({ prompt, aspect='landscape', artStyleId='au
 
 
 export async function analyzeImageFocalPoint(imagePath,context=''){
+  if(String(process.env.AUTO_ANALYZE_FOCAL_POINT||'false').toLowerCase()!=='true')return {focalX:50,focalY:50,reason:'Center crop default; AI focal analysis disabled to reduce model usage'};
   const ai=client();if(!ai)return {focalX:50,focalY:50,reason:'AI focal analysis unavailable'};
   try{
     const ext=path.extname(imagePath).toLowerCase();const mime=ext==='.png'?'image/png':ext==='.webp'?'image/webp':'image/jpeg';const bytes=await fs.readFile(imagePath);

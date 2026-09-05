@@ -1,10 +1,14 @@
-# Long Form Design Studio - Recykal
+# Long Form Design Studio
+
+**Current release: v1.2.3 — Durable Resume, Source Integrity & Cost Control.** See `docs/v1.2.3-durable-resume-source-integrity.md`. - Recykal
 
 Release candidate **v1.2.1** adds source-faithful Preserve-mode allocation, removes the false A4 page-budget stop, strengthens source coverage QC, and fixes the repeated/under-filled PDF layouts found in the Goa DRS test.
 
 See `docs/v1.2.1-source-fidelity-layout-fix.md`.
 
-# Long Form Design Studio — Recykal
+# Long Form Design Studio
+
+**Current release: v1.2.3 — Durable Resume, Source Integrity & Cost Control.** See `docs/v1.2.3-durable-resume-source-integrity.md`. — Recykal
 
 ## v1.1.8 — Optional exact final document length
 
@@ -70,7 +74,9 @@ If `durable` is false, fix `DATABASE_URL` first; v1.1.6 intentionally blocks pai
 This release fixes long-document generation failures caused by one very large structured JSON response. The Studio now generates one page/slide at a time, validates each structured response independently, retries a failed page up to three times with progressively smaller response constraints, checkpoints every completed page to the project store, and exposes a saved partial draft if a later page cannot recover. Raw JSON parser errors are no longer shown to marketing users.
 
 For long projects, whole-project AI rewrite during automatic QC is disabled; QC remains active, but the Studio will not risk regenerating a 30+ page project as one large JSON payload. Source content is selected page-by-page using relevant and sequential excerpts, so file-based Preserve mode remains source-aware without sending the entire source into every page request.
-# Long Form Design Studio — Recykal
+# Long Form Design Studio
+
+**Current release: v1.2.3 — Durable Resume, Source Integrity & Cost Control.** See `docs/v1.2.3-durable-resume-source-integrity.md`. — Recykal
 
 ## v1.1.3 Render build hardening
 
@@ -83,7 +89,9 @@ This release makes the deployment gate immune to PDFKit/fontkit font-subsetting 
 
 The Docker image now uses `npm install --include=dev` (the previous `--omit=dev=false` form is invalid in current npm) and runs a deployment-safe `npm run check:build` after the Vite build. The heavier PDF export/preflight self-test remains available as `npm run check`, but it is intentionally not a Docker build gate because environment-specific print/preflight checks must not prevent the web service from starting. Runtime health is still monitored through `/api/health`.
 
-# Long Form Design Studio — Recykal
+# Long Form Design Studio
+
+**Current release: v1.2.3 — Durable Resume, Source Integrity & Cost Control.** See `docs/v1.2.3-durable-resume-source-integrity.md`. — Recykal
 
 Native internal AI design platform for the Recykal Marketing Team. Gamma is a product/UX benchmark only; this application has no Gamma API dependency.
 

@@ -229,7 +229,7 @@ app.delete('/api/webhooks/:id',requireRole('admin'),async(req,res,next)=>{try{aw
 app.post('/api/outline',async(req,res,next)=>{
   try{
     await ensureDurableGenerationStorage();
-    const {type,prompt,uploadId,contentMode='generate',audience,tone,language,visualStyle,deckStyle='auto',themeId='recykal-core',projectPalette=[],imageSource='mixed',artStyleId='auto',customArtStyle='',imageVariations=1,styleReferences=[],targetPageCount=null,autoExpandPageTarget=true,research=false,templateId,knowledgeIds=[]}=req.body||{};
+    const {type,prompt,uploadId,contentMode='generate',audience,tone,language,visualStyle,deckStyle='auto',themeId='recykal-core',projectPalette=[],imageSource='mixed',artStyleId='auto',customArtStyle='',imageVariations=1,styleReferences=[],targetPageCount=null,autoExpandPageTarget=false,research=false,templateId,knowledgeIds=[]}=req.body||{};
     if(!['presentation','document','graphic'].includes(type))return res.status(400).json({error:'Choose Presentation, Document, or Graphic.'});
     let parsedFile=await loadAggregate(uploadId);if(parsedFile){parsedFile=scopeAggregate(parsedFile,req.body?.sourceRanges);parsedFile.uploadId=uploadId;}if(!prompt?.trim()&&!parsedFile)return res.status(400).json({error:'Enter a brief or upload a source file.'});
     const knowledge=await getKnowledge(Array.isArray(knowledgeIds)?knowledgeIds.slice(0,12):[]);const template=getTemplate(templateId);
@@ -240,7 +240,7 @@ app.post('/api/outline',async(req,res,next)=>{
 app.post('/api/generate',async(req,res,next)=>{
   try{
     await ensureDurableGenerationStorage();
-    const {type,prompt,uploadId,contentMode='generate',audience,tone,language,visualStyle,deckStyle='auto',themeId='recykal-core',projectPalette=[],imageSource='mixed',artStyleId='auto',customArtStyle='',imageVariations=1,styleReferences=[],targetPageCount=null,autoExpandPageTarget=true,approvedOutline=null,research=false,templateId,knowledgeIds=[]}=req.body||{};
+    const {type,prompt,uploadId,contentMode='generate',audience,tone,language,visualStyle,deckStyle='auto',themeId='recykal-core',projectPalette=[],imageSource='mixed',artStyleId='auto',customArtStyle='',imageVariations=1,styleReferences=[],targetPageCount=null,autoExpandPageTarget=false,approvedOutline=null,research=false,templateId,knowledgeIds=[]}=req.body||{};
     if(!['presentation','document','graphic'].includes(type)) return res.status(400).json({error:'Choose Presentation, Document, or Graphic.'});
     let parsedFile=await loadAggregate(uploadId);
     if(parsedFile){parsedFile=scopeAggregate(parsedFile,req.body?.sourceRanges);parsedFile.uploadId=uploadId;}
@@ -262,7 +262,7 @@ app.post('/api/generate-stream',async(req,res,next)=>{
   const heartbeat=setInterval(()=>send({stage:'heartbeat'}),12000);heartbeat.unref?.();
   const generationController=new AbortController();res.on('close',()=>{clearInterval(heartbeat);if(!res.writableEnded)generationController.abort()});
   try{
-    const {type,prompt,uploadId,contentMode='generate',audience,tone,language,visualStyle,deckStyle='auto',themeId='recykal-core',projectPalette=[],imageSource='mixed',artStyleId='auto',customArtStyle='',imageVariations=1,styleReferences=[],targetPageCount=null,autoExpandPageTarget=true,approvedOutline=null,research=false,templateId,knowledgeIds=[]}=req.body||{};
+    const {type,prompt,uploadId,contentMode='generate',audience,tone,language,visualStyle,deckStyle='auto',themeId='recykal-core',projectPalette=[],imageSource='mixed',artStyleId='auto',customArtStyle='',imageVariations=1,styleReferences=[],targetPageCount=null,autoExpandPageTarget=false,approvedOutline=null,research=false,templateId,knowledgeIds=[]}=req.body||{};
     if(!['presentation','document','graphic'].includes(type)){send({stage:'error',error:'Choose a valid type.'});return res.end()}
     let parsedFile=null;if(uploadId){parsedFile=await loadAggregate(uploadId);if(!parsedFile){send({stage:'error',error:'Uploaded source is no longer available. Upload it again.'});return res.end()}parsedFile=scopeAggregate(parsedFile,req.body?.sourceRanges);parsedFile.uploadId=uploadId;}
     const knowledge=await getKnowledge(Array.isArray(knowledgeIds)?knowledgeIds.slice(0,12):[]);const template=getTemplate(templateId);
@@ -293,9 +293,10 @@ app.post('/api/projects/:id/resume-generation-stream',async(req,res,next)=>{
     await ensureDurableGenerationStorage();
     const project=await getProject(req.params.id);if(!project){send({stage:'error',error:'Project not found.'});clearInterval(heartbeat);return res.end()}
     if(project.type!=='document'){send({stage:'error',error:'Only document projects can resume an interrupted exact-page generation.'});clearInterval(heartbeat);return res.end()}
-    const targetPageCount=Math.max(1,Math.min(500,Math.floor(Number(req.body?.targetPageCount)||0)));
-    if(!targetPageCount){send({stage:'error',error:'Choose a new final page target.'});clearInterval(heartbeat);return res.end()}
-    if(targetPageCount<=(project.pages||[]).length){send({stage:'error',error:`Choose a final page target greater than the ${(project.pages||[]).length} completed pages.`});clearInterval(heartbeat);return res.end()}
+    const savedTarget=Math.max(Number(project.generation?.total||0),Number(project.settings?.targetPageCount||0),(project.pages||[]).length);
+    const requested=Math.floor(Number(req.body?.targetPageCount)||0);
+    const targetPageCount=Math.max((project.pages||[]).length,Math.min(500,requested>0?requested:savedTarget));
+    if(!targetPageCount){send({stage:'error',error:'This project does not contain a recoverable page target.'});clearInterval(heartbeat);return res.end()}
 
     let parsedFile=await loadCombinedProjectSource(project);
     const ranges=project.sourceFile?.metadata?.sourceRanges||project.sourceFile?.metadata?.sourceSelection||[];
@@ -303,15 +304,15 @@ app.post('/api/projects/:id/resume-generation-stream',async(req,res,next)=>{
     const settings=project.settings||{};
     const template=getTemplate(settings.templateId);
     const knowledge=await getKnowledge(Array.isArray(settings.knowledgeIds)?settings.knowledgeIds.slice(0,12):[]);
-    await saveVersion(project,`Before increasing page target to ${targetPageCount}`);
+    await saveVersion(project,`Before resuming generation at ${targetPageCount} pages`);
     const checkpoint=async(partial,meta={})=>{await saveProject(partial);if(meta.stage==='page'||meta.stage==='resume-accepted')broadcast(partial.id,{type:'project-updated',project:partial,reason:'generation-resume-checkpoint'});};
     const resumed=await resumeProjectStream(project,{targetPageCount,parsedFile,template,knowledge,signal:generationController.signal,checkpoint},async ev=>send(ev));
-    await saveProject(resumed);await saveVersion(resumed,`Generation resumed to ${targetPageCount} pages`);broadcast(resumed.id,{type:'project-updated',project:resumed,reason:'generation-resumed'});dispatchWebhook('project.updated',{projectId:resumed.id,title:resumed.title,type:resumed.type,source:'target-resume'});
+    await saveProject(resumed);await saveVersion(resumed,`Generation resumed to ${targetPageCount} pages`);broadcast(resumed.id,{type:'project-updated',project:resumed,reason:'generation-resumed'});dispatchWebhook('project.updated',{projectId:resumed.id,title:resumed.title,type:resumed.type,source:'checkpoint-resume'});
     send({stage:'saved',project:resumed,resumed:true});clearInterval(heartbeat);res.end();
   }catch(e){console.error(e);clearInterval(heartbeat);const raw=String(e?.message||'Generation resume failed.');const safe=/unterminated|string in json|unexpected end of json/i.test(raw)?'One resumed page returned incomplete structured data. Completed pages remain saved.':raw;send({stage:'error',error:safe,projectId:e.projectId||req.params.id,completedPages:Number(e.completedPages||0),totalPages:Number(e.totalPages||0),recoverable:true});res.end();}
 });
 
-app.post('/api/v1/generate',requireScope('write'),async(req,res,next)=>{try{await ensureDurableGenerationStorage();const {type,prompt,contentMode='generate',audience,tone,language,visualStyle,deckStyle='auto',themeId='recykal-core',projectPalette=[],imageSource='mixed',artStyleId='auto',customArtStyle='',imageVariations=1,targetPageCount=null,autoExpandPageTarget=true,research=false,templateId,knowledgeIds=[]}=req.body||{};if(!['presentation','document','graphic'].includes(type))return res.status(400).json({error:'Choose a valid type.'});if(!String(prompt||'').trim())return res.status(400).json({error:'prompt is required for the public API.'});const knowledge=await getKnowledge(Array.isArray(knowledgeIds)?knowledgeIds.slice(0,12):[]);const template=getTemplate(templateId);const project=await generateProject({type,prompt,contentMode,audience,tone,language,visualStyle,deckStyle,themeId,projectPalette,imageSource,artStyleId,customArtStyle,imageVariations,targetPageCount,autoExpandPageTarget,research,template,knowledge});await saveProject(project);await saveVersion(project,'API generation');dispatchWebhook('project.created',{projectId:project.id,title:project.title,type:project.type,source:'public-api'});res.status(201).json({data:project})}catch(e){next(e)}});
+app.post('/api/v1/generate',requireScope('write'),async(req,res,next)=>{try{await ensureDurableGenerationStorage();const {type,prompt,contentMode='generate',audience,tone,language,visualStyle,deckStyle='auto',themeId='recykal-core',projectPalette=[],imageSource='mixed',artStyleId='auto',customArtStyle='',imageVariations=1,targetPageCount=null,autoExpandPageTarget=false,research=false,templateId,knowledgeIds=[]}=req.body||{};if(!['presentation','document','graphic'].includes(type))return res.status(400).json({error:'Choose a valid type.'});if(!String(prompt||'').trim())return res.status(400).json({error:'prompt is required for the public API.'});const knowledge=await getKnowledge(Array.isArray(knowledgeIds)?knowledgeIds.slice(0,12):[]);const template=getTemplate(templateId);const project=await generateProject({type,prompt,contentMode,audience,tone,language,visualStyle,deckStyle,themeId,projectPalette,imageSource,artStyleId,customArtStyle,imageVariations,targetPageCount,autoExpandPageTarget,research,template,knowledge});await saveProject(project);await saveVersion(project,'API generation');dispatchWebhook('project.created',{projectId:project.id,title:project.title,type:project.type,source:'public-api'});res.status(201).json({data:project})}catch(e){next(e)}});
 app.post('/api/v1/projects/:id/export',requireScope('export'),async(req,res,next)=>{try{const p=await getProject(req.params.id);if(!p)return res.status(404).json({error:'Project not found.'});const review=Boolean(req.body?.review);if(!review&&(!p.qc?.pass||p.qc?.stale))return res.status(422).json({error:'Final export requires passed/current QC.'});if(!review&&!finalApprovalOk(p))return res.status(422).json({error:'Final export requires workflow status Approved by an Approver.'});const format=String(req.body?.format||'pdf').toLowerCase();const profile=format==='pdf'&&String(req.body?.profile||'digital').toLowerCase()==='print'?'print':'digital';const file=await exportProject(p,format,{review,profile});const preflight=await preflightExport(file,format,p,{profile});if(!review&&!preflight.pass)return res.status(422).json({error:'Rendered export preflight failed.',preflight});res.json({data:{url:`/exports/${encodeURIComponent(path.basename(file))}`,filename:path.basename(file),profile,preflight}})}catch(e){next(e)}});
 
 app.post('/api/projects/recover',async(req,res,next)=>{try{

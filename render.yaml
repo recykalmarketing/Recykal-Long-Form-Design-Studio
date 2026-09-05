@@ -12,8 +12,14 @@ services:
         value: gpt-5.6
       - key: OPENAI_IMAGE_MODEL
         value: gpt-image-2
+      - key: OPENAI_PAGE_TIMEOUT_MS
+        value: "120000"
+      - key: OPENAI_PROMPT_CACHE_KEY
+        value: lfds-v1.2.3-layout-engine
       - key: AUTO_GENERATE_IMAGES
         value: "true"
+      - key: AUTO_ANALYZE_FOCAL_POINT
+        value: "false"
       - key: AUTO_QC
         value: "true"
       - key: QC_MAX_REVISIONS

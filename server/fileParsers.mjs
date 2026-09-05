@@ -31,6 +31,26 @@ async function legacyConvert(filePath, ext) {
   return path.join(outDir, converted);
 }
 
+function normalizePdfText(value=''){
+  return String(value||'')
+    .replace(/\uFB00/g,'ff').replace(/\uFB01/g,'fi').replace(/\uFB02/g,'fl').replace(/\uFB03/g,'ffi').replace(/\uFB04/g,'ffl')
+    .replace(/\u00A0/g,' ').replace(/[ \t]+/g,' ').trim();
+}
+function repairPdfWordBreaks(text=''){
+  return String(text||'')
+    .replace(/\bfi\s+(rst|nal|nance|nancial|nancing|nancially|nd|nds|nding|eld|elds|gure|gures|ve|cation|cations|cation|ed|er|ers|rm|rms|xed)\b/gi,(_,tail)=>`fi${tail}`)
+    .replace(/\bfl\s+(ow|ows|exible|exibility|oor|oors)\b/gi,(_,tail)=>`fl${tail}`)
+    .replace(/\bidenti\s+fi\s+(ed|cation|er|ers)\b/gi,(_,tail)=>`identifi${tail}`)
+    .replace(/\bveri\s+fi\s+(ed|cation)\b/gi,(_,tail)=>`verifi${tail}`)
+    .replace(/\bde\s+fi\s+(ned|nition|nitions)\b/gi,(_,tail)=>`defi${tail}`)
+    .replace(/\bnoti\s+fi\s+(ed|cation|cations)\b/gi,(_,tail)=>`notifi${tail}`)
+    .replace(/\bspeci\s+fi\s+(ed|c|cation)\b/gi,(_,tail)=>`specifi${tail}`)
+    .replace(/\bsigni\s+fi\s+(cant|cantly)\b/gi,(_,tail)=>`signifi${tail}`)
+    .replace(/\bin\s+fl\s+(uence|uences)\b/gi,(_,tail)=>`influ${tail}`)
+    .replace(/\s+([,.;:!?])/g,'$1')
+    .replace(/\n{3,}/g,'\n\n').trim();
+}
+
 async function parsePdf(filePath) {
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
   const data = new Uint8Array(await fs.readFile(filePath));
@@ -38,27 +58,28 @@ async function parsePdf(filePath) {
   const pages = [];
   for (let n=1; n<=doc.numPages; n++) {
     const page = await doc.getPage(n);
+    const viewport=page.getViewport({scale:1});
     const content = await page.getTextContent();
-    const items = content.items || [];
-    // Preserve visual reading order approximately by y (descending), then x.
-    const rows = new Map();
-    for (const item of items) {
-      const y = Math.round(item.transform?.[5] || 0);
-      const x = item.transform?.[4] || 0;
-      if (!rows.has(y)) rows.set(y, []);
-      rows.get(y).push({x, text: item.str});
-    }
-    const text = [...rows.entries()]
-      .sort((a,b)=>b[0]-a[0])
-      .map(([,r])=>r.sort((a,b)=>a.x-b.x).map(i=>i.text).join(' '))
-      .join('\n').replace(/\n{3,}/g,'\n\n').trim();
-    pages.push({ index:n, title:`Page ${n}`, text });
+    const raw=(content.items||[]).map(item=>({text:normalizePdfText(item.str),x:Number(item.transform?.[4]||0),y:Number(item.transform?.[5]||0),w:Number(item.width||0),h:Math.abs(Number(item.height||item.transform?.[3]||10))})).filter(x=>x.text);
+    raw.sort((a,b)=>b.y-a.y||a.x-b.x);
+    const rows=[];const yTolerance=2.8;
+    for(const item of raw){let row=rows.find(r=>Math.abs(r.y-item.y)<=Math.max(yTolerance,Math.min(5,item.h*.28)));if(!row){row={y:item.y,items:[]};rows.push(row)}row.items.push(item);}
+    rows.sort((a,b)=>b.y-a.y);
+    const lines=rows.map(row=>{
+      const items=row.items.sort((a,b)=>a.x-b.x);let out='';let prev=null;
+      for(const item of items){if(!prev){out=item.text;prev=item;continue}const gap=item.x-(prev.x+Math.max(prev.w,0));const natural=Math.max(4,Math.min(14,(prev.h+item.h)*.28));const columnBreak=gap>Math.max(22,natural*4)||item.x>viewport.width*.48&&prev.x<viewport.width*.42&&gap>14;out+=columnBreak?'\t':gap>natural?' ':' ';out+=item.text;prev=item;}
+      return out.trim();
+    }).filter(Boolean);
+    const text=repairPdfWordBreaks(lines.join('\n'));
+    const tabRows=lines.filter(x=>x.includes('\t')).length;
+    pages.push({ index:n, title:`Page ${n}`, text, structure:{tabularRows:tabRows,width:viewport.width,height:viewport.height} });
   }
   const readable=pages.filter(p=>(p.text||'').trim().length>=20).length;
   const ratio=doc.numPages?readable/doc.numPages:0;
   const extractionConfidence=ratio>=0.95?'high':ratio>=0.7?'medium':'low';
-  return { kind:'pdf', pages, text: pages.map(p=>`--- PAGE ${p.index} ---\n${p.text}`).join('\n\n'), metadata:{ pageCount:doc.numPages, readablePages:readable, extractionConfidence }, extractionConfidence, assets:[] };
+  return { kind:'pdf', pages, text: pages.map(p=>`--- PAGE ${p.index} ---\n${p.text}`).join('\n\n'), metadata:{ pageCount:doc.numPages, readablePages:readable, extractionConfidence, geometryAware:true }, extractionConfidence, assets:[] };
 }
+
 
 function htmlToStructuredText(html) {
   return html
